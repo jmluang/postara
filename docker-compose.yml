@@ -1,0 +1,72 @@
+services:
+  courier:
+    image: "${COURIER_IMAGE:-courier:0.1.0}"
+    build:
+      context: .
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      DATABASE_URL: postgresql+asyncpg://courier@postgres:5432/courier
+      APP_DATABASE_URL: postgresql+asyncpg://courier@postgres:5432/courier
+      AUDIT_DATABASE_URL: postgresql+asyncpg://courier@postgres:5432/courier
+      DB_PASSWORD_FILE: /etc/courier/secrets/db_password.txt
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      POSTGRES_DB: courier
+      POSTGRES_USER: courier
+      APP_SCHEMA: app
+      AUDIT_SCHEMA: audit
+      COURIER_CONFIG: /etc/courier/courier.toml
+      COURIER_SECRETS_DIR: /etc/courier/secrets
+      IMAP_WORKERS: "8"
+    volumes:
+      - ./secrets:/etc/courier/secrets:ro
+      - ${COURIER_CONFIG_FILE:-./config/courier.toml.example}:/etc/courier/courier.toml:ro
+    ports:
+      - "${COURIER_HOST_BIND:-127.0.0.1}:${COURIER_HOST_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import json, urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2); raise SystemExit(0 if r.status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: courier
+      POSTGRES_USER: courier
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "courier", "-d", "courier"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+
+volumes:
+  pgdata:
+    driver: local

@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" fill="none" aria-label="Postara app icon">
+  <title>Postara</title>
+  <desc>Postara app icon with a warm envelope and fast delivery lines.</desc>
+  <rect width="512" height="512" rx="112" fill="#263F2E"/>
+  <path d="M132 166c0-31 25-56 56-56h174c31 0 56 25 56 56v180c0 31-25 56-56 56H188c-31 0-56-25-56-56V166Z" fill="#FFF8E9"/>
+  <path d="M168 184 275 264l107-80" stroke="#263F2E" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M169 335 246 269" stroke="#E2C279" stroke-width="22" stroke-linecap="round"/>
+  <path d="M381 335 304 269" stroke="#E2C279" stroke-width="22" stroke-linecap="round"/>
+  <path d="M60 220h82M88 282h54M60 344h82" stroke="#C7923D" stroke-width="30" stroke-linecap="round"/>
+</svg>

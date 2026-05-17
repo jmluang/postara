@@ -1,0 +1,30 @@
+[server]
+host = "0.0.0.0"
+port = 8000
+trusted_proxy_headers = true
+
+[database]
+app_url = "postgresql+asyncpg://courier@postgres:5432/courier"
+audit_url = "postgresql+asyncpg://courier@postgres:5432/courier"
+password_file = "/etc/courier/secrets/db_password.txt"
+app_schema = "app"
+audit_schema = "audit"
+pool_size = 5
+max_overflow = 5
+
+[secrets]
+directory = "/etc/courier/secrets"
+fernet_key = "fernet.key"
+token_hash_key = "token_hash.key"
+
+[imap]
+workers = 8
+connect_timeout_seconds = 10
+read_timeout_seconds = 30
+
+[security]
+api_key_header = "X-Api-Key"
+
+[logging]
+level = "INFO"
+json = true

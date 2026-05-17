@@ -1,0 +1,32 @@
+.DS_Store
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+.worktrees/
+node_modules/
+*.tsbuildinfo
+*.egg-info/
+__pycache__/
+
+# Local secrets must stay outside git.
+pgpass
+.pgpass
+secrets
+secrets/
+*.key
+*.hash
+*.pem
+*.crt
+*.p12
+*.env
+.env
+.env.*
+
+# Runtime output.
+logs/
+tmp/
+dist/
+!frontend/dist/
+!frontend/dist/**
+build/
