@@ -4,16 +4,16 @@ port = 8000
 trusted_proxy_headers = true
 
 [database]
-app_url = "postgresql+asyncpg://courier@postgres:5432/courier"
-audit_url = "postgresql+asyncpg://courier@postgres:5432/courier"
-password_file = "/etc/courier/secrets/db_password.txt"
+app_url = "postgresql+asyncpg://postara@postgres:5432/postara"
+audit_url = "postgresql+asyncpg://postara@postgres:5432/postara"
+password_file = "/etc/postara/secrets/db_password.txt"
 app_schema = "app"
 audit_schema = "audit"
 pool_size = 5
 max_overflow = 5
 
 [secrets]
-directory = "/etc/courier/secrets"
+directory = "/etc/postara/secrets"
 fernet_key = "fernet.key"
 token_hash_key = "token_hash.key"
 

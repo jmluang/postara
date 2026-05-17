@@ -1,4 +1,4 @@
-from courier.config import Settings
+from postara.config import Settings
 
 
 def test_settings_defaults_keep_app_and_audit_database_separate():
@@ -13,12 +13,12 @@ def test_settings_defaults_keep_app_and_audit_database_separate():
 
 def test_settings_accepts_independent_audit_database_url():
     settings = Settings(
-        database_url="postgresql+asyncpg://courier@postgres:5432/courier",
-        audit_database_url="postgresql+asyncpg://audit@postgres:5432/courier_audit",
+        database_url="postgresql+asyncpg://postara@postgres:5432/postara",
+        audit_database_url="postgresql+asyncpg://audit@postgres:5432/postara_audit",
     )
 
-    assert settings.app_database_url == "postgresql+asyncpg://courier@postgres:5432/courier"
-    assert settings.audit_database_url == "postgresql+asyncpg://audit@postgres:5432/courier_audit"
+    assert settings.app_database_url == "postgresql+asyncpg://postara@postgres:5432/postara"
+    assert settings.audit_database_url == "postgresql+asyncpg://audit@postgres:5432/postara_audit"
 
 
 def test_settings_reads_database_password_file(tmp_path):
@@ -27,17 +27,17 @@ def test_settings_reads_database_password_file(tmp_path):
     password_file.chmod(0o400)
 
     settings = Settings(
-        database_url="postgresql+asyncpg://courier@postgres:5432/courier",
+        database_url="postgresql+asyncpg://postara@postgres:5432/postara",
         db_password_file=str(password_file),
     )
 
-    assert settings.database_url == "postgresql+asyncpg://courier:s3cr3t@postgres:5432/courier"
+    assert settings.database_url == "postgresql+asyncpg://postara:s3cr3t@postgres:5432/postara"
     assert settings.app_database_url == settings.database_url
     assert settings.audit_database_url == settings.database_url
 
 
-def test_settings_reads_courier_toml(monkeypatch, tmp_path):
-    config_file = tmp_path / "courier.toml"
+def test_settings_reads_postara_toml(monkeypatch, tmp_path):
+    config_file = tmp_path / "postara.toml"
     config_file.write_text(
         """
 [database]
@@ -47,7 +47,7 @@ app_schema = "custom_app"
 audit_schema = "custom_audit"
 
 [secrets]
-directory = "/tmp/courier-secrets"
+directory = "/tmp/postara-secrets"
 
 [imap]
 workers = 3
@@ -55,7 +55,7 @@ read_timeout_seconds = 12
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("COURIER_CONFIG", str(config_file))
+    monkeypatch.setenv("POSTARA_CONFIG", str(config_file))
 
     settings = Settings()
 
@@ -63,15 +63,15 @@ read_timeout_seconds = 12
     assert settings.audit_database_url == "postgresql+asyncpg://audit@postgres:5432/auditdb"
     assert settings.app_schema == "custom_app"
     assert settings.audit_schema == "custom_audit"
-    assert settings.secrets_dir == "/tmp/courier-secrets"
+    assert settings.secrets_dir == "/tmp/postara-secrets"
     assert settings.imap_workers == 3
     assert settings.imap_timeout_seconds == 12
 
 
 def test_settings_normalizes_plain_postgres_urls_to_asyncpg():
     settings = Settings(
-        database_url="postgresql://courier@postgres:5432/courier?pgbouncer=true",
-        direct_url="postgres://courier@direct:5432/courier",
+        database_url="postgresql://postara@postgres:5432/postara?pgbouncer=true",
+        direct_url="postgres://postara@direct:5432/postara",
     )
 
     assert settings.database_url.startswith("postgresql+asyncpg://")

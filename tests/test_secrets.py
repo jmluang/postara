@@ -1,10 +1,10 @@
 import os
 import stat
 
-from courier.config import Settings
-from courier.crypto import CredentialCipher
-from courier.database import load_runtime_secrets
-from courier.secrets import SecretFileError, ensure_secret_file
+from postara.config import Settings
+from postara.crypto import CredentialCipher
+from postara.database import load_runtime_secrets
+from postara.secrets import SecretFileError, ensure_secret_file
 
 
 def test_secret_file_must_be_0400(tmp_path):

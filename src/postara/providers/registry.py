@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from courier.providers.gmail import GmailAdapter
+from postara.providers.gmail import GmailAdapter
 
 
 @dataclass(frozen=True)

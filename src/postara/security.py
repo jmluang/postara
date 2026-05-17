@@ -11,8 +11,8 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 
 
-TOKEN_RE = re.compile(r"^crr_(?P<kind>live|test)_(?P<prefix>[0-9A-Za-z]{8})\.(?P<secret>[0-9A-Za-z]{32})$")
-SESSION_RE = re.compile(r"^crr_session_(?P<prefix>[0-9A-Za-z]{8})\.(?P<secret>[0-9A-Za-z]{48})$")
+TOKEN_RE = re.compile(r"^pst_(?P<kind>live|test)_(?P<prefix>[0-9A-Za-z]{8})\.(?P<secret>[0-9A-Za-z]{32})$")
+SESSION_RE = re.compile(r"^pst_session_(?P<prefix>[0-9A-Za-z]{8})\.(?P<secret>[0-9A-Za-z]{48})$")
 BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
@@ -35,7 +35,7 @@ def generate_api_key(kind: str = "live") -> str:
     if kind not in {"live", "test"}:
         raise ValueError(f"Unsupported token kind: {kind}")
 
-    return f"crr_{kind}_{_base62(8)}.{_base62(32)}"
+    return f"pst_{kind}_{_base62(8)}.{_base62(32)}"
 
 
 def hash_password(raw_password: str) -> str:
@@ -50,13 +50,13 @@ def verify_password(raw_password: str, password_hash: str) -> bool:
 
 
 def generate_session_token() -> str:
-    return f"crr_session_{_base62(8)}.{_base62(48)}"
+    return f"pst_session_{_base62(8)}.{_base62(48)}"
 
 
 def parse_session_token(raw_token: str) -> tuple[str, str]:
     match = SESSION_RE.fullmatch(raw_token)
     if not match:
-        raise TokenFormatError("Invalid Courier session token format.")
+        raise TokenFormatError("Invalid Postara session token format.")
     return match.group("prefix"), match.group("secret")
 
 
@@ -77,7 +77,7 @@ def verify_session_token_hash(raw_token: str, expected_hash: bytes) -> bool:
 def parse_api_key(raw_key: str) -> ApiKeyParts:
     match = TOKEN_RE.fullmatch(raw_key)
     if not match:
-        raise TokenFormatError("Invalid Courier token format.")
+        raise TokenFormatError("Invalid Postara token format.")
 
     return ApiKeyParts(
         kind=match.group("kind"),
@@ -119,4 +119,4 @@ def verify_api_key_hash(raw_key: str, expected_hash: bytes, token_hash_key: byte
 
 def redact_token_for_display(raw_key: str) -> str:
     parts = parse_api_key(raw_key)
-    return f"crr_{parts.kind}_{parts.prefix}..."
+    return f"pst_{parts.kind}_{parts.prefix}..."

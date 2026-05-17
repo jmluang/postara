@@ -7,11 +7,11 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from courier.accounts import AccountNotFoundError, DuplicateEmailError
-from courier.audit import AuditEvent, sanitize_extra
-from courier.crypto import CredentialCipher
-from courier.models import AccountORM, AuditEventORM, AuditOutboxORM
-from courier.security import generate_api_key, hash_api_key, parse_api_key, verify_api_key_hash
+from postara.accounts import AccountNotFoundError, DuplicateEmailError
+from postara.audit import AuditEvent, sanitize_extra
+from postara.crypto import CredentialCipher
+from postara.models import AccountORM, AuditEventORM, AuditOutboxORM
+from postara.security import generate_api_key, hash_api_key, parse_api_key, verify_api_key_hash
 
 
 class AccountRepository:

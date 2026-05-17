@@ -1,12 +1,12 @@
 from sqlalchemy.pool import NullPool
 
-from courier.config import Settings
-from courier.database import asyncpg_engine_kwargs, create_app_session_factory, create_audit_session_factory
+from postara.config import Settings
+from postara.database import asyncpg_engine_kwargs, create_app_session_factory, create_audit_session_factory
 
 
 def test_asyncpg_engine_kwargs_disable_statement_cache_for_pooler_urls():
     kwargs = asyncpg_engine_kwargs(
-        "postgresql+asyncpg://courier@pooler.example.com:6543/courier"
+        "postgresql+asyncpg://postara@pooler.example.com:6543/postara"
         "?prepared_statement_cache_size=0"
     )
 
@@ -20,7 +20,7 @@ def test_asyncpg_engine_kwargs_disable_statement_cache_for_pooler_urls():
 
 
 def test_asyncpg_engine_kwargs_keep_regular_urls_unchanged():
-    assert asyncpg_engine_kwargs("postgresql+asyncpg://courier@postgres:5432/courier") == {}
+    assert asyncpg_engine_kwargs("postgresql+asyncpg://postara@postgres:5432/postara") == {}
 
 
 def test_session_factories_apply_pooler_engine_kwargs(monkeypatch):
@@ -30,11 +30,11 @@ def test_session_factories_apply_pooler_engine_kwargs(monkeypatch):
         calls.append((url, kwargs))
         return object()
 
-    monkeypatch.setattr("courier.database.create_async_engine", fake_create_async_engine)
+    monkeypatch.setattr("postara.database.create_async_engine", fake_create_async_engine)
     settings = Settings(
-        app_database_url="postgresql+asyncpg://courier@app-pooler.example.com:6543/courier"
+        app_database_url="postgresql+asyncpg://postara@app-pooler.example.com:6543/postara"
         "?prepared_statement_cache_size=0",
-        audit_database_url="postgresql+asyncpg://courier@audit-pooler.example.com:6543/courier"
+        audit_database_url="postgresql+asyncpg://postara@audit-pooler.example.com:6543/postara"
         "?prepared_statement_cache_size=0",
     )
 

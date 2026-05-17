@@ -1,6 +1,6 @@
-# Courier
+# Postara
 
-Courier is a multi-tenant IMAP-to-HTTP gateway. It exposes mailbox operations through a small HTTP API while keeping mailbox credentials and API keys separate.
+Postara is a multi-tenant IMAP-to-HTTP gateway. It exposes mailbox operations through a small HTTP API while keeping mailbox credentials and API keys separate.
 
 ## Local development
 
@@ -11,10 +11,10 @@ DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-1-<region>.poole
 DIRECT_URL=postgresql://postgres.<project-ref>:<password>@aws-1-<region>.pooler.supabase.com:5432/postgres
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_KEY=<anon-or-service-role-key>
-COURIER_SECRETS_DIR=/absolute/path/to/courier/secrets
+POSTARA_SECRETS_DIR=/absolute/path/to/postara/secrets
 ```
 
-`DATABASE_URL` is the runtime URL. If it has `pgbouncer=true`, Courier disables asyncpg prepared statement caching and lets the Supabase transaction pooler manage database connections. `DIRECT_URL` is used by Alembic migrations.
+`DATABASE_URL` is the runtime URL. If it has `pgbouncer=true`, Postara disables asyncpg prepared statement caching and lets the Supabase transaction pooler manage database connections. `DIRECT_URL` is used by Alembic migrations.
 
 Install and migrate without Docker:
 
@@ -33,7 +33,7 @@ scripts/run_local.sh
 
 `scripts/run_local.sh` runs migrations before starting FastAPI. This public repository ships only the prebuilt `/app` frontend bundle in `frontend/dist`; frontend source is kept in a separate private repository.
 
-Use `COURIER_PORT=18081 scripts/run_local.sh` to run on another port.
+Use `POSTARA_PORT=18081 scripts/run_local.sh` to run on another port.
 
 Open the built-in workspace at `http://127.0.0.1:18080/app`. Create the first user in the browser; that user becomes `owner`. Sign in, add mailboxes, create scoped API keys, browse folders/messages with your session, and open the protected OpenAPI JSON.
 
@@ -43,7 +43,7 @@ Owner routes live under `/owner/*` and use the same session login. Owners can in
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ Courier                         Refresh               Account  │
+│ Postara                         Refresh               Account  │
 ├──────────────────┬─────────────────────────────────────────────┤
 │ Mailboxes        │ Mailboxes                                   │
 │ API Keys         │ ┌ Add mailbox ┐ ┌ Connected accounts       ┐ │
@@ -73,7 +73,7 @@ ghcr.io/<owner>/<repo>:<version>
 Run a published image with Compose:
 
 ```bash
-export COURIER_IMAGE=ghcr.io/<owner>/<repo>:latest
-docker compose pull courier
+export POSTARA_IMAGE=ghcr.io/<owner>/<repo>:latest
+docker compose pull postara
 docker compose up -d
 ```

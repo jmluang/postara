@@ -1,4 +1,4 @@
-from courier.models import AccountORM, ApiKeyORM, AuditEventORM, AuditOutboxORM, UserORM, UserSessionORM
+from postara.models import AccountORM, ApiKeyORM, AuditEventORM, AuditOutboxORM, UserORM, UserSessionORM
 
 
 def test_models_use_separate_app_and_audit_schemas():

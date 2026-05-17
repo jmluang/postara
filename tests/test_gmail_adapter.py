@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from courier.providers.base import MessageQuery, MessageNotFoundError
-from courier.providers.gmail import GmailAdapter
+from postara.providers.base import MessageQuery, MessageNotFoundError
+from postara.providers.gmail import GmailAdapter
 
 
 @dataclass

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-DATA_BACKUP_DIR="${DATA_BACKUP_DIR:-/backup/courier}"
-SECRETS_SOURCE_DIR="${SECRETS_SOURCE_DIR:-/opt/courier}"
+DATA_BACKUP_DIR="${DATA_BACKUP_DIR:-/backup/postara}"
+SECRETS_SOURCE_DIR="${SECRETS_SOURCE_DIR:-/opt/postara}"
 SECRETS_BACKUP_DIR="${SECRETS_BACKUP_DIR:-/backup-secrets}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
@@ -50,11 +50,11 @@ secrets_backup="$SECRETS_BACKUP_DIR/secrets-$TIMESTAMP.tar.gz"
 
 echo "Writing database backup to $db_backup"
 docker compose -f "$COMPOSE_FILE" exec -T postgres pg_dump \
-  -U courier \
+  -U postara \
   --format=custom \
   --schema=app \
   --schema=audit \
-  courier > "$db_backup"
+  postara > "$db_backup"
 chmod 0600 "$db_backup"
 
 echo "Writing secrets archive to $secrets_backup"

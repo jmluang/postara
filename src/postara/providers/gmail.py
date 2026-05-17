@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from courier.providers.base import (
+from postara.providers.base import (
     Folder,
     Message,
     MessageQuery,
@@ -123,11 +123,11 @@ class GmailAdapter:
         try:
             value = int(uid)
         except (TypeError, ValueError) as exc:
-            from courier.providers.base import MessageNotFoundError
+            from postara.providers.base import MessageNotFoundError
 
             raise MessageNotFoundError("Invalid message uid.") from exc
         if value <= 0:
-            from courier.providers.base import MessageNotFoundError
+            from postara.providers.base import MessageNotFoundError
 
             raise MessageNotFoundError("Invalid message uid.")
         return value

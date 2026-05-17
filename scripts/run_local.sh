@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
-COURIER_HOST="${COURIER_HOST:-127.0.0.1}"
-COURIER_PORT="${COURIER_PORT:-18080}"
+POSTARA_HOST="${POSTARA_HOST:-127.0.0.1}"
+POSTARA_PORT="${POSTARA_PORT:-18080}"
 RUN_MIGRATIONS="${RUN_MIGRATIONS:-1}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -13,13 +13,13 @@ usage() {
   cat <<'EOF'
 Usage: scripts/run_local.sh [--help]
 
-Run Courier locally without Docker.
+Run Postara locally without Docker.
 
 Environment:
   ENV_FILE        Path to env file. Default: .env
   PYTHON_BIN      Python executable. Default: .venv/bin/python, then python3
-  COURIER_HOST    Bind host. Default: 127.0.0.1
-  COURIER_PORT    Bind port. Default: 18080
+  POSTARA_HOST    Bind host. Default: 127.0.0.1
+  POSTARA_PORT    Bind port. Default: 18080
   RUN_MIGRATIONS  Run alembic upgrade head before start. Default: 1
   BUILD_FRONTEND  Unsupported in this public repo. Default: 0
 EOF
@@ -58,10 +58,10 @@ set -a
 . "$ENV_FILE"
 set +a
 
-export COURIER_SECRETS_DIR="${COURIER_SECRETS_DIR:-$ROOT_DIR/secrets}"
-mkdir -p "$COURIER_SECRETS_DIR"
+export POSTARA_SECRETS_DIR="${POSTARA_SECRETS_DIR:-$ROOT_DIR/secrets}"
+mkdir -p "$POSTARA_SECRETS_DIR"
 
-if ! "$PYTHON_BIN" -c "import courier, uvicorn, alembic" >/dev/null 2>&1; then
+if ! "$PYTHON_BIN" -c "import postara, uvicorn, alembic" >/dev/null 2>&1; then
   echo "Missing local Python dependencies." >&2
   echo "Run: $PYTHON_BIN -m pip install -e '.[dev]'" >&2
   exit 1
@@ -83,6 +83,6 @@ if [ ! -f "$ROOT_DIR/frontend/dist/index.html" ]; then
   exit 1
 fi
 
-echo "Starting Courier at http://$COURIER_HOST:$COURIER_PORT/" >&2
+echo "Starting Postara at http://$POSTARA_HOST:$POSTARA_PORT/" >&2
 echo "Create the first user in the browser; that user becomes owner." >&2
-exec "$PYTHON_BIN" -m uvicorn courier.api:app --host "$COURIER_HOST" --port "$COURIER_PORT"
+exec "$PYTHON_BIN" -m uvicorn postara.api:app --host "$POSTARA_HOST" --port "$POSTARA_PORT"

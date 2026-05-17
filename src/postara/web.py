@@ -23,7 +23,7 @@ def index_html(frontend_dist: Path) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Postara</title>
 </head>
-<body data-courier-app="missing-build">
+<body data-postara-app="missing-build">
   <main>
     <h1>Postara frontend build is missing.</h1>
     <p>Copy the prebuilt app-only frontend bundle into frontend/dist, then restart Postara.</p>

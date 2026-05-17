@@ -15,7 +15,7 @@ class ImapExecutionTimeout(TimeoutError):
 
 class ImapExecutor:
     def __init__(self, max_workers: int = 8, per_account_limit: int = 2, timeout_seconds: float = 30.0) -> None:
-        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="courier-imap")
+        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="postara-imap")
         self._per_account_limit = per_account_limit
         self._timeout_seconds = timeout_seconds
         self._account_locks: dict[int, BoundedSemaphore] = {}

@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from courier.crypto import CredentialCipher
-from courier.models import AccountORM, AuditEventORM, AuditOutboxORM, Base
-from courier.repositories import AccountRepository, AuditOutboxRepository, AuditRepository, dispatch_audit_outbox
+from postara.crypto import CredentialCipher
+from postara.models import AccountORM, AuditEventORM, AuditOutboxORM, Base
+from postara.repositories import AccountRepository, AuditOutboxRepository, AuditRepository, dispatch_audit_outbox
 
 
 @pytest.fixture

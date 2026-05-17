@@ -8,7 +8,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
-from courier.secrets import ensure_secret_file
+from postara.secrets import ensure_secret_file
 
 try:
     import tomllib
@@ -19,7 +19,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
-    database_url: str = "postgresql+asyncpg://courier@postgres:5432/courier"
+    database_url: str = "postgresql+asyncpg://postara@postgres:5432/postara"
     direct_url: str | None = None
     app_database_url: str | None = None
     audit_database_url: str | None = None
@@ -29,13 +29,13 @@ class Settings(BaseSettings):
     imap_workers: int = 8
     imap_timeout_seconds: float = 30.0
     secrets_dir: str = Field(
-        default="/etc/courier/secrets",
-        validation_alias=AliasChoices("COURIER_SECRETS_DIR", "SECRETS_DIR"),
+        default="/etc/postara/secrets",
+        validation_alias=AliasChoices("POSTARA_SECRETS_DIR", "SECRETS_DIR"),
     )
     cors_allowed_origins: list[str] = []
 
     def __init__(self, **data):
-        config_defaults = _load_config_defaults(os.environ.get("COURIER_CONFIG"))
+        config_defaults = _load_config_defaults(os.environ.get("POSTARA_CONFIG"))
         for key, value in config_defaults.items():
             if key not in data and key.upper() not in os.environ:
                 data[key] = value

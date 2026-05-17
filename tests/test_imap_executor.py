@@ -1,6 +1,6 @@
 import threading
 
-from courier.imap_executor import ImapExecutor
+from postara.imap_executor import ImapExecutor
 
 
 def test_imap_executor_runs_sync_work_off_calling_thread():

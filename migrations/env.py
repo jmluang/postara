@@ -7,8 +7,8 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from courier.config import Settings
-from courier.models import Base
+from postara.config import Settings
+from postara.models import Base
 
 
 config = context.config

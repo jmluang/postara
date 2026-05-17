@@ -8,13 +8,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from courier.config import Settings
-from courier.crypto import CredentialCipher
-from courier.security import hash_api_key
-from courier.secrets import ensure_secret_file
+from postara.config import Settings
+from postara.crypto import CredentialCipher
+from postara.security import hash_api_key
+from postara.secrets import ensure_secret_file
 
 
-_TOKEN_HASH_TEST_KEY = "crr_test_" + "0" * 8 + "." + "0" * 32
+_TOKEN_HASH_TEST_KEY = "pst_test_" + "0" * 8 + "." + "0" * 32
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,7 @@ def load_runtime_secrets(settings: Settings) -> RuntimeSecrets:
 
 
 def create_repository_account_service(settings: Settings):
-    from courier.accounts import RepositoryAccountService
+    from postara.accounts import RepositoryAccountService
 
     runtime_secrets = load_runtime_secrets(settings)
     return RepositoryAccountService(
@@ -86,7 +86,7 @@ def create_repository_account_service(settings: Settings):
 
 
 def create_repository_user_service(settings: Settings):
-    from courier.users import RepositoryUserService
+    from postara.users import RepositoryUserService
 
     runtime_secrets = load_runtime_secrets(settings)
     return RepositoryUserService(

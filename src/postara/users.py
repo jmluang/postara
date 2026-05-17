@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from courier.models import ApiKeyORM, UserORM, UserSessionORM
-from courier.security import (
+from postara.models import ApiKeyORM, UserORM, UserSessionORM
+from postara.security import (
     generate_api_key,
     generate_session_token,
     hash_api_key,

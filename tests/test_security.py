@@ -1,6 +1,6 @@
 import base64
 
-from courier.security import (
+from postara.security import (
     ApiKeyParts,
     TokenFormatError,
     generate_session_token,
@@ -30,7 +30,7 @@ def test_api_key_parser_accepts_real_shape_and_extracts_parts():
 
 def test_api_key_parser_rejects_placeholder_examples():
     try:
-        parse_api_key("crr_live_<prefix>.<secret>")
+        parse_api_key("pst_live_<prefix>.<secret>")
     except TokenFormatError:
         return
 
@@ -50,7 +50,7 @@ def test_api_key_hash_uses_keyed_hmac_and_constant_verify():
 
 
 def test_redact_token_for_display_keeps_only_safe_prefix():
-    assert redact_token_for_display(sample_api_key()) == "crr_live_a8f3k29x..."
+    assert redact_token_for_display(sample_api_key()) == "pst_live_a8f3k29x..."
 
 
 def test_password_hash_verifies_without_storing_plaintext():
@@ -65,7 +65,7 @@ def test_session_token_hash_is_prefix_addressable_and_constant_verify():
     token = generate_session_token()
     prefix, digest = hash_session_token(token)
 
-    assert token.startswith("crr_session_")
+    assert token.startswith("pst_session_")
     assert len(prefix) == 8
     assert verify_session_token_hash(token, digest)
     assert not verify_session_token_hash(token + "x", digest)

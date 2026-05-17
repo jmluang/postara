@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 
-from courier.accounts import AccountService
-from courier.api import create_app
-from courier.providers.base import AuthenticationError, Folder, Message, MessageSummary
-from courier.users import UserService
+from postara.accounts import AccountService
+from postara.api import create_app
+from postara.providers.base import AuthenticationError, Folder, Message, MessageSummary
+from postara.users import UserService
 
 
 class FakeMailboxRuntime:
@@ -130,7 +130,7 @@ def test_user_can_create_api_key_and_access_own_mailbox_messages():
 
     assert key_response.status_code == 201
     raw_key = key_response.json()["api_key"]
-    assert raw_key.startswith("crr_live_")
+    assert raw_key.startswith("pst_live_")
 
     messages = client.get(f"/mailboxes/{mailbox['id']}/messages", headers={"X-Api-Key": raw_key})
     assert messages.status_code == 200
@@ -341,7 +341,7 @@ def test_legacy_account_api_key_routes_are_not_exposed():
         ("get", "/accounts/1/messages/123"),
         ("post", "/accounts/1/messages/123/seen"),
     ):
-        response = getattr(client, method)(path, headers={"X-Api-Key": "crr_live_deadbeef.deadbeefdeadbeefdeadbeefdeadbeef"})
+        response = getattr(client, method)(path, headers={"X-Api-Key": "pst_live_deadbeef.deadbeefdeadbeefdeadbeefdeadbeef"})
         assert response.status_code == 404
 
 

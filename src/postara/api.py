@@ -22,29 +22,29 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 
-from courier.accounts import AccountNotFoundError, AccountService, DuplicateEmailError
-from courier.config import Settings
-from courier.database import (
+from postara.accounts import AccountNotFoundError, AccountService, DuplicateEmailError
+from postara.config import Settings
+from postara.database import (
     create_app_session_factory,
     create_audit_session_factory,
     create_repository_account_service,
     create_repository_user_service,
 )
-from courier.errors import ErrorResponse
-from courier.mailbox import MailboxRuntime
-from courier.models import AuditEventORM, AuditOutboxORM
-from courier.providers.base import AuthenticationError, MessageNotFoundError, MessageQuery, ProviderError, UnsupportedProviderFeature
-from courier.providers.registry import ProviderRegistry
-from courier.rate_limit import InMemoryRateLimiter, RateLimitExceeded
-from courier.security import TokenFormatError, parse_api_key
-from courier.users import (
+from postara.errors import ErrorResponse
+from postara.mailbox import MailboxRuntime
+from postara.models import AuditEventORM, AuditOutboxORM
+from postara.providers.base import AuthenticationError, MessageNotFoundError, MessageQuery, ProviderError, UnsupportedProviderFeature
+from postara.providers.registry import ProviderRegistry
+from postara.rate_limit import InMemoryRateLimiter, RateLimitExceeded
+from postara.security import TokenFormatError, parse_api_key
+from postara.users import (
     ApiKeyNotFoundError,
     DuplicateUserEmailError,
     InvalidUserCredentialsError,
     SessionNotFoundError,
     UserService,
 )
-from courier.web import brand_icon_path, default_frontend_dist, index_html
+from postara.web import brand_icon_path, default_frontend_dist, index_html
 
 
 BASE62 = string.ascii_letters + string.digits
@@ -466,7 +466,7 @@ def create_app(
         return await _resolve(account_service.get_for_user(api_key.user_id, mailbox_id))
 
     async def audit_outbox_loop() -> None:
-        from courier.repositories import dispatch_audit_outbox
+        from postara.repositories import dispatch_audit_outbox
 
         while True:
             with contextlib.suppress(Exception):
@@ -485,7 +485,7 @@ def create_app(
                 await task
 
     app = FastAPI(
-        title="Courier",
+        title="Postara",
         version="0.1.0",
         docs_url=None,
         redoc_url=None,
@@ -747,7 +747,7 @@ def create_app(
 
     @app.get("/docs", include_in_schema=False)
     async def docs(_user=Depends(require_user_session)):
-        return get_swagger_ui_html(openapi_url="/openapi.json", title="Courier API")
+        return get_swagger_ui_html(openapi_url="/openapi.json", title="Postara API")
 
     @app.get("/mailboxes")
     async def list_mailboxes(user=Depends(require_user_session)):

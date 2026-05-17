@@ -1,4 +1,4 @@
-from courier.audit import AuditEvent, AuditOutbox, sanitize_extra
+from postara.audit import AuditEvent, AuditOutbox, sanitize_extra
 
 
 def test_sanitize_extra_redacts_sensitive_prefixes_recursively():

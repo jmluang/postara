@@ -1,6 +1,6 @@
 import pytest
 
-from courier.providers.registry import ProviderRegistry
+from postara.providers.registry import ProviderRegistry
 
 
 def test_default_registry_only_exposes_implemented_providers():

@@ -4,9 +4,9 @@ import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from courier.audit import AuditEvent
-from courier.crypto import CredentialCipher
-from courier.security import generate_api_key, hash_api_key, parse_api_key, verify_api_key_hash
+from postara.audit import AuditEvent
+from postara.crypto import CredentialCipher
+from postara.security import generate_api_key, hash_api_key, parse_api_key, verify_api_key_hash
 
 
 class AccountNotFoundError(LookupError):
@@ -202,7 +202,7 @@ class RepositoryAccountService:
         self._active_token_hash_version = active_token_hash_version
 
     def _repo(self, session):
-        from courier.repositories import AccountRepository
+        from postara.repositories import AccountRepository
 
         return AccountRepository(
             session,
@@ -212,7 +212,7 @@ class RepositoryAccountService:
         )
 
     async def create(self, *, name: str, email: str, provider: str, password: str, audit_context: dict | None = None):
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -245,7 +245,7 @@ class RepositoryAccountService:
         password: str,
         audit_context: dict | None = None,
     ):
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -287,7 +287,7 @@ class RepositoryAccountService:
                 return await self._repo(session).require_key_for_account(account_id, raw_key)
 
     async def rotate_key(self, account_id: int, raw_key: str | None = None, audit_context: dict | None = None):
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -311,7 +311,7 @@ class RepositoryAccountService:
         password: str,
         audit_context: dict | None = None,
     ):
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -335,7 +335,7 @@ class RepositoryAccountService:
         password: str,
         audit_context: dict | None = None,
     ):
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -358,7 +358,7 @@ class RepositoryAccountService:
             return self._cipher.decrypt(account.encrypted_password, account.key_version)
 
     async def delete(self, account_id: int, audit_context: dict | None = None) -> None:
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -375,7 +375,7 @@ class RepositoryAccountService:
                 )
 
     async def delete_for_user(self, user_id: int, account_id: int, audit_context: dict | None = None) -> None:
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():
@@ -398,7 +398,7 @@ class RepositoryAccountService:
         seen: bool,
         audit_context: dict | None = None,
     ) -> None:
-        from courier.repositories import AuditOutboxRepository
+        from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
             async with session.begin():

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-courier_smoke_$(date +%s)}"
-COURIER_HOST_BIND="${COURIER_HOST_BIND:-127.0.0.1}"
-COURIER_HOST_PORT="${COURIER_HOST_PORT:-18080}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-postara_smoke_$(date +%s)}"
+POSTARA_HOST_BIND="${POSTARA_HOST_BIND:-127.0.0.1}"
+POSTARA_HOST_PORT="${POSTARA_HOST_PORT:-18080}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TMP_DIR="$(mktemp -d)"
@@ -12,8 +12,8 @@ CREATED_SECRETS=0
 cleanup() {
   set +e
   COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
-  COURIER_HOST_BIND="$COURIER_HOST_BIND" \
-  COURIER_HOST_PORT="$COURIER_HOST_PORT" \
+  POSTARA_HOST_BIND="$POSTARA_HOST_BIND" \
+  POSTARA_HOST_PORT="$POSTARA_HOST_PORT" \
     docker compose -f "$ROOT_DIR/docker-compose.yml" down -v >/dev/null 2>&1
 
   if [ "$CREATED_SECRETS" = "1" ]; then
@@ -70,12 +70,12 @@ if [ ! -e secrets ]; then
   CREATED_SECRETS=1
 fi
 
-export COMPOSE_PROJECT_NAME COURIER_HOST_BIND COURIER_HOST_PORT
+export COMPOSE_PROJECT_NAME POSTARA_HOST_BIND POSTARA_HOST_PORT
 
-docker compose -f docker-compose.yml build courier
-docker compose -f docker-compose.yml up -d postgres courier
+docker compose -f docker-compose.yml build postara
+docker compose -f docker-compose.yml up -d postgres postara
 
-health_url="http://$COURIER_HOST_BIND:$COURIER_HOST_PORT/health"
+health_url="http://$POSTARA_HOST_BIND:$POSTARA_HOST_PORT/health"
 for _ in $(seq 1 30); do
   if "$python_bin" - "$health_url" <<'PY'
 import json
@@ -107,10 +107,10 @@ if response.status != 200 or body.get("status") != "ok":
 PY
 
 docker compose -f docker-compose.yml exec -T postgres \
-  psql -U courier -d courier -tAc "SELECT to_regclass('app.accounts'), to_regclass('audit.events')" \
+  psql -U postara -d postara -tAc "SELECT to_regclass('app.accounts'), to_regclass('audit.events')" \
   | grep -q "app.accounts|audit.events"
 
-"$python_bin" - "$COURIER_HOST_BIND" "$COURIER_HOST_PORT" <<'PY'
+"$python_bin" - "$POSTARA_HOST_BIND" "$POSTARA_HOST_PORT" <<'PY'
 import json
 import sys
 import urllib.error
@@ -157,14 +157,14 @@ except urllib.error.HTTPError as exc:
 raise SystemExit("Invalid IMAP credentials should be rejected.")
 PY
 
-uid="$(docker compose -f docker-compose.yml exec -T courier id -u)"
+uid="$(docker compose -f docker-compose.yml exec -T postara id -u)"
 if [ "$uid" != "1000" ]; then
-  echo "Courier container must run as uid 1000, got $uid." >&2
+  echo "Postara container must run as uid 1000, got $uid." >&2
   exit 1
 fi
 
-if docker compose -f docker-compose.yml exec -T courier sh -c 'touch /app/.readonly-test' >/dev/null 2>&1; then
-  echo "Courier container root filesystem is writable." >&2
+if docker compose -f docker-compose.yml exec -T postara sh -c 'touch /app/.readonly-test' >/dev/null 2>&1; then
+  echo "Postara container root filesystem is writable." >&2
   exit 1
 fi
 

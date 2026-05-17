@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 
-from courier.api import create_app
-from courier.accounts import AccountService
-from courier.providers.base import Folder, Message, MessageSummary
-from courier.users import UserService
+from postara.api import create_app
+from postara.accounts import AccountService
+from postara.providers.base import Folder, Message, MessageSummary
+from postara.users import UserService
 
 
 class FakeMailboxRuntime:

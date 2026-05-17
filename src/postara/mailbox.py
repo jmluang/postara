@@ -5,11 +5,11 @@ import imaplib
 from imap_tools import MailBox
 from imap_tools.errors import MailboxLoginError
 
-from courier.config import Settings
-from courier.imap_executor import ImapExecutionTimeout, ImapExecutor
-from courier.providers.base import AuthenticationError, MessageQuery, ProviderConnectionError
-from courier.providers.gmail import GmailAdapter
-from courier.providers.registry import ProviderRegistry
+from postara.config import Settings
+from postara.imap_executor import ImapExecutionTimeout, ImapExecutor
+from postara.providers.base import AuthenticationError, MessageQuery, ProviderConnectionError
+from postara.providers.gmail import GmailAdapter
+from postara.providers.registry import ProviderRegistry
 
 
 class MailboxRuntime:

@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from courier.providers.base import MessageQuery, UnsupportedProviderFeature
-from courier.providers.gmail import GmailAdapter
+from postara.providers.base import MessageQuery, UnsupportedProviderFeature
+from postara.providers.gmail import GmailAdapter
 
 
 def test_gmail_adapter_rejects_unsupported_query_filters():

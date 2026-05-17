@@ -1,8 +1,8 @@
 from fastapi.testclient import TestClient
 
-from courier.accounts import AccountService
-from courier.api import create_app
-from courier.users import UserService
+from postara.accounts import AccountService
+from postara.api import create_app
+from postara.users import UserService
 
 
 def test_user_can_register_login_fetch_me_and_logout():
@@ -19,7 +19,7 @@ def test_user_can_register_login_fetch_me_and_logout():
     assert registered.status_code == 201
     assert registered.json()["user"]["email"] == "user@example.com"
     assert registered.json()["user"]["role"] == "owner"
-    assert registered.json()["session_token"].startswith("crr_session_")
+    assert registered.json()["session_token"].startswith("pst_session_")
 
     token = registered.json()["session_token"]
     me = client.get("/me", headers={"Authorization": f"Bearer {token}"})

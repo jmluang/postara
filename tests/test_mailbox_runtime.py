@@ -1,8 +1,8 @@
 import pytest
 from imap_tools.errors import MailboxLoginError
 
-from courier.mailbox import MailboxRuntime
-from courier.providers.base import AuthenticationError
+from postara.mailbox import MailboxRuntime
+from postara.providers.base import AuthenticationError
 
 
 class ImmediateExecutor:
@@ -19,7 +19,7 @@ class RejectingMailBox:
 
 
 def test_validate_credentials_maps_imap_tools_login_error(monkeypatch):
-    monkeypatch.setattr("courier.mailbox.MailBox", RejectingMailBox)
+    monkeypatch.setattr("postara.mailbox.MailBox", RejectingMailBox)
     runtime = MailboxRuntime(executor=ImmediateExecutor())
 
     with pytest.raises(AuthenticationError):

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-SECRETS_DIR="${COURIER_SECRETS_DIR:-/etc/courier/secrets}"
+SECRETS_DIR="${POSTARA_SECRETS_DIR:-/etc/postara/secrets}"
 
 require_secret() {
   path="$SECRETS_DIR/$1"
@@ -37,8 +37,8 @@ require_secret "db_password.txt"
 
 DB_HOST="${DB_HOST:-postgres}"
 DB_PORT="${DB_PORT:-5432}"
-DB_NAME="${POSTGRES_DB:-courier}"
-DB_USER="${POSTGRES_USER:-courier}"
+DB_NAME="${POSTGRES_DB:-postara}"
+DB_USER="${POSTGRES_USER:-postara}"
 
 until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; do
   echo "Waiting for Postgres at $DB_HOST:$DB_PORT..." >&2
@@ -47,8 +47,8 @@ done
 
 if [ -f alembic.ini ]; then
   python -m alembic upgrade head
-elif [ "${COURIER_REQUIRE_ALEMBIC:-0}" = "1" ]; then
-  echo "COURIER_REQUIRE_ALEMBIC=1 but alembic.ini is missing." >&2
+elif [ "${POSTARA_REQUIRE_ALEMBIC:-0}" = "1" ]; then
+  echo "POSTARA_REQUIRE_ALEMBIC=1 but alembic.ini is missing." >&2
   exit 1
 fi
 
