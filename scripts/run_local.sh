@@ -32,13 +32,66 @@ fi
 
 detect_python() {
   if [ -n "$PYTHON_BIN" ]; then
+    if ! python_version_ok "$PYTHON_BIN"; then
+      echo "PYTHON_BIN must point to Python 3.10 or newer: $PYTHON_BIN" >&2
+      exit 1
+    fi
     printf '%s\n' "$PYTHON_BIN"
   elif [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    if ! python_version_ok "$ROOT_DIR/.venv/bin/python"; then
+      echo "Recreating local Python environment with Python 3.10 or newer." >&2
+      rm -rf "$ROOT_DIR/.venv"
+      create_venv
+      return
+    fi
     printf '%s\n' "$ROOT_DIR/.venv/bin/python"
-  elif command -v python3 >/dev/null 2>&1; then
-    command -v python3
   else
-    echo "Missing Python interpreter." >&2
+    create_venv
+  fi
+}
+
+python_version_ok() {
+  "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+
+find_compatible_python() {
+  local candidate
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 /Library/Frameworks/Python.framework/Versions/3.10/bin/python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      candidate="$(command -v "$candidate")"
+    elif [ ! -x "$candidate" ]; then
+      continue
+    fi
+
+    if python_version_ok "$candidate"; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  echo "Missing Python 3.10 or newer." >&2
+  exit 1
+}
+
+create_venv() {
+  local python
+  python="$(find_compatible_python)"
+  echo "Creating local Python environment at $ROOT_DIR/.venv with $python" >&2
+  "$python" -m venv "$ROOT_DIR/.venv"
+  printf '%s\n' "$ROOT_DIR/.venv/bin/python"
+}
+
+ensure_dependencies() {
+  if "$PYTHON_BIN" -c "import postara, uvicorn, alembic" >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Installing local Python dependencies..." >&2
+  "$PYTHON_BIN" -m pip install --upgrade pip setuptools wheel
+  "$PYTHON_BIN" -m pip install -e '.[dev]'
+
+  if ! "$PYTHON_BIN" -c "import postara, uvicorn, alembic" >/dev/null 2>&1; then
+    echo "Failed to install local Python dependencies." >&2
     exit 1
   fi
 }
@@ -61,11 +114,7 @@ set +a
 export POSTARA_SECRETS_DIR="${POSTARA_SECRETS_DIR:-$ROOT_DIR/secrets}"
 mkdir -p "$POSTARA_SECRETS_DIR"
 
-if ! "$PYTHON_BIN" -c "import postara, uvicorn, alembic" >/dev/null 2>&1; then
-  echo "Missing local Python dependencies." >&2
-  echo "Run: $PYTHON_BIN -m pip install -e '.[dev]'" >&2
-  exit 1
-fi
+ensure_dependencies
 
 if [ "$RUN_MIGRATIONS" = "1" ]; then
   "$PYTHON_BIN" -m alembic upgrade head

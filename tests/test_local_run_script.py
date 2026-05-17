@@ -31,6 +31,13 @@ def test_run_local_script_loads_env_migrates_and_runs_uvicorn():
     script = SCRIPT.read_text(encoding="utf-8")
 
     assert 'ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"' in script
+    assert "python_version_ok()" in script
+    assert "find_compatible_python()" in script
+    assert "python3.10" in script
+    assert "Recreating local Python environment" in script
+    assert '"$python" -m venv "$ROOT_DIR/.venv"' in script
+    assert '"$PYTHON_BIN" -m pip install --upgrade pip setuptools wheel' in script
+    assert '"$PYTHON_BIN" -m pip install -e \'.[dev]\'' in script
     assert "set -a" in script
     assert 'BUILD_FRONTEND="${BUILD_FRONTEND:-0}"' in script
     assert "BUILD_FRONTEND=1 is not supported" in script
