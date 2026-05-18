@@ -1,8 +1,6 @@
 services:
   postara:
-    image: "${POSTARA_IMAGE:-postara:0.1.0}"
-    build:
-      context: .
+    image: "${POSTARA_IMAGE:-ghcr.io/jmluang/postara:latest}"
     env_file:
       - .env
     user: "1000:1000"
@@ -16,7 +14,6 @@ services:
     environment:
       APP_SCHEMA: app
       AUDIT_SCHEMA: audit
-      POSTARA_CONFIG: /etc/postara/postara.toml
       POSTARA_SECRETS_DIR: /etc/postara/secrets
       IMAP_WORKERS: "8"
       DB_HOST: "${POSTARA_DB_HOST:-aws-1-ap-northeast-1.pooler.supabase.com}"
@@ -25,7 +22,6 @@ services:
       POSTGRES_USER: "${POSTARA_DB_USER:-postgres.lozxfhywnnnhatuwcloc}"
     volumes:
       - ./secrets:/etc/postara/secrets:ro
-      - ${POSTARA_CONFIG_FILE:-./config/postara.toml.example}:/etc/postara/postara.toml:ro
     ports:
       - "${POSTARA_HOST_BIND:-127.0.0.1}:${POSTARA_HOST_PORT:-18080}:8000"
     healthcheck:
