@@ -7,6 +7,13 @@ def default_frontend_dist() -> Path:
     return Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
+def default_frontend_site_dist() -> Path:
+    backend_site_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist-site"
+    if backend_site_dist.exists():
+        return backend_site_dist
+    return Path(__file__).resolve().parents[3] / "frontend" / "dist-site"
+
+
 def brand_icon_path(filename: str) -> Path:
     if filename not in {"favicon.svg", "icon-app.svg"}:
         raise ValueError("unsupported brand icon")
@@ -32,3 +39,17 @@ def index_html(frontend_dist: Path) -> str:
 </html>
 """
     return index_path.read_text(encoding="utf-8")
+
+
+def frontend_asset_path(asset_path: str, *asset_roots: Path) -> Path | None:
+    for root in asset_roots:
+        if not root.exists():
+            continue
+        candidate = (root / asset_path).resolve()
+        try:
+            candidate.relative_to(root.resolve())
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None

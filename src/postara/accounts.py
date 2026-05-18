@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import base64
+import re
+import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from postara.audit import AuditEvent
+from postara.credentials import AppPasswordCredential, OAuth2Credential
 from postara.crypto import CredentialCipher
-from postara.security import generate_api_key, hash_api_key, parse_api_key, verify_api_key_hash
+from postara.oauth import OAuthExchangeError
+from postara.security import (
+    generate_api_key,
+    hash_api_key,
+    hash_verification_code,
+    parse_api_key,
+    verify_api_key_hash,
+    verify_verification_code_hash,
+)
 
 
 class AccountNotFoundError(LookupError):
@@ -14,6 +25,34 @@ class AccountNotFoundError(LookupError):
 
 
 class DuplicateEmailError(ValueError):
+    pass
+
+
+class DuplicateMailboxNameError(ValueError):
+    pass
+
+
+MAILBOX_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
+
+
+def validate_mailbox_name(name: str) -> None:
+    if not MAILBOX_NAME_PATTERN.fullmatch(name):
+        raise ValueError("Mailbox API name must contain only letters, numbers, and hyphens.")
+
+
+class MailboxVerificationNotFoundError(LookupError):
+    pass
+
+
+class MailboxVerificationExpiredError(ValueError):
+    pass
+
+
+class MailboxVerificationFailedError(ValueError):
+    pass
+
+
+class MailboxReconnectRequiredError(RuntimeError):
     pass
 
 
@@ -25,8 +64,8 @@ class AccountRecord:
     email: str
     provider: str
     auth_type: str
-    encrypted_password: bytes
-    key_version: int
+    encrypted_password: bytes | None
+    key_version: int | None
     imap_host: str
     imap_port: int
     api_key_prefix: str
@@ -34,6 +73,12 @@ class AccountRecord:
     api_key_hash_version: int
     created_at: datetime
     last_used_at: datetime | None = None
+    oauth_refresh_token: bytes | None = None
+    oauth_access_token: bytes | None = None
+    oauth_token_expires_at: datetime | None = None
+    oauth_scopes: list[str] | None = None
+    oauth_subject: str | None = None
+    oauth_email: str | None = None
 
     def to_dto(self) -> dict:
         return {
@@ -51,6 +96,42 @@ class AccountRecord:
         }
 
 
+@dataclass
+class PendingMailboxVerificationRecord:
+    id: str
+    user_id: int
+    mailbox_id: int | None
+    provider: str
+    auth_type: str
+    name: str
+    email: str
+    encrypted_password: bytes
+    key_version: int
+    code_hash: bytes
+    code_hash_version: int
+    attempts: int
+    status: str
+    expires_at: datetime
+    created_at: datetime
+    verified_at: datetime | None = None
+
+    def to_dto(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "mailbox_id": self.mailbox_id,
+            "provider": self.provider,
+            "auth_type": self.auth_type,
+            "name": self.name,
+            "email": self.email,
+            "attempts": self.attempts,
+            "status": self.status,
+            "expires_at": self.expires_at.isoformat(),
+            "created_at": self.created_at.isoformat(),
+            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
+        }
+
+
 class AccountService:
     def __init__(self, cipher: CredentialCipher | None = None, token_hash_key: bytes | None = None) -> None:
         self._cipher = cipher or CredentialCipher({1: CredentialCipher.generate_key()}, active_version=1)
@@ -58,6 +139,7 @@ class AccountService:
         self._token_hash_key = token_hash_key or base64.urlsafe_b64encode(b"test-token-hash-key-material-32!!")
         self._next_id = 1
         self._accounts: dict[int, AccountRecord] = {}
+        self._pending_verifications: dict[str, PendingMailboxVerificationRecord] = {}
 
     def create(
         self,
@@ -68,8 +150,11 @@ class AccountService:
         password: str,
         user_id: int | None = None,
     ) -> tuple[AccountRecord, str]:
+        validate_mailbox_name(name)
         if any(account.email == email and account.user_id == user_id for account in self._accounts.values()):
             raise DuplicateEmailError(email)
+        if any(account.name == name and account.user_id == user_id for account in self._accounts.values()):
+            raise DuplicateMailboxNameError(name)
         if provider != "gmail":
             raise ValueError("Only gmail is supported in v0.1.")
 
@@ -96,7 +181,7 @@ class AccountService:
         self._accounts[account.id] = account
         return account, api_key
 
-    def create_for_user(
+    def create_with_app_password(
         self,
         *,
         user_id: int,
@@ -106,6 +191,150 @@ class AccountService:
         password: str,
     ) -> AccountRecord:
         account, _api_key = self.create(name=name, email=email, provider=provider, password=password, user_id=user_id)
+        return account
+
+    def create_for_user(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        password: str,
+    ) -> AccountRecord:
+        return self.create_with_app_password(
+            user_id=user_id,
+            name=name,
+            email=email,
+            provider=provider,
+            password=password,
+        )
+
+    def start_app_password_verification(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        password: str,
+        code: str,
+        expires_at: datetime | None = None,
+    ) -> PendingMailboxVerificationRecord:
+        validate_mailbox_name(name)
+        if any(account.email == email and account.user_id == user_id for account in self._accounts.values()):
+            raise DuplicateEmailError(email)
+        if any(account.name == name and account.user_id == user_id for account in self._accounts.values()):
+            raise DuplicateMailboxNameError(name)
+        encrypted = self._cipher.encrypt(password)
+        code_hash_version, code_hash = hash_verification_code(code, self._token_hash_key, version=1)
+        now = datetime.now(timezone.utc)
+        verification = PendingMailboxVerificationRecord(
+            id="mbv_" + secrets.token_urlsafe(24),
+            user_id=user_id,
+            mailbox_id=None,
+            provider=provider,
+            auth_type="app_password",
+            name=name,
+            email=email,
+            encrypted_password=encrypted.ciphertext,
+            key_version=encrypted.key_version,
+            code_hash=code_hash,
+            code_hash_version=code_hash_version,
+            attempts=0,
+            status="verifying",
+            expires_at=expires_at or now + timedelta(minutes=15),
+            created_at=now,
+        )
+        self._pending_verifications[verification.id] = verification
+        return verification
+
+    def complete_app_password_verification(
+        self,
+        *,
+        user_id: int,
+        verification_id: str,
+        code: str,
+    ) -> AccountRecord:
+        verification = self._pending_verifications.get(verification_id)
+        if verification is None or verification.user_id != user_id or verification.status != "verifying":
+            raise MailboxVerificationNotFoundError(verification_id)
+
+        now = datetime.now(timezone.utc)
+        if verification.expires_at <= now:
+            verification.status = "expired"
+            raise MailboxVerificationExpiredError(verification_id)
+
+        if not verify_verification_code_hash(code, verification.code_hash, self._token_hash_key):
+            verification.attempts += 1
+            if verification.attempts >= 5:
+                verification.status = "failed"
+            raise MailboxVerificationFailedError(verification_id)
+
+        password = self._cipher.decrypt(verification.encrypted_password, verification.key_version)
+        account = self.create_with_app_password(
+            user_id=user_id,
+            name=verification.name,
+            email=verification.email,
+            provider=verification.provider,
+            password=password,
+        )
+        verification.mailbox_id = account.id
+        verification.status = "verified"
+        verification.verified_at = now
+        return account
+
+    def create_with_oauth(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        refresh_token: str,
+        access_token: str | None,
+        expires_at: datetime | None,
+        scopes: tuple[str, ...],
+        subject: str | None,
+        oauth_email: str,
+    ) -> AccountRecord:
+        canonical_email = oauth_email or email
+        validate_mailbox_name(name)
+        if any(account.email == canonical_email and account.user_id == user_id for account in self._accounts.values()):
+            raise DuplicateEmailError(canonical_email)
+        if any(account.name == name and account.user_id == user_id for account in self._accounts.values()):
+            raise DuplicateMailboxNameError(name)
+        if provider != "gmail":
+            raise ValueError("Only gmail OAuth is supported in this implementation phase.")
+
+        api_key = generate_api_key("live")
+        parts = parse_api_key(api_key)
+        encrypted_refresh = self._cipher.encrypt(refresh_token)
+        encrypted_access = self._cipher.encrypt(access_token) if access_token is not None else None
+        account = AccountRecord(
+            id=self._next_id,
+            user_id=user_id,
+            name=name,
+            email=canonical_email,
+            provider=provider,
+            auth_type="oauth2",
+            encrypted_password=None,
+            key_version=encrypted_refresh.key_version,
+            imap_host="imap.gmail.com",
+            imap_port=993,
+            api_key_prefix=parts.prefix,
+            api_key_hash=hash_api_key(api_key, self._token_hash_key),
+            api_key_hash_version=1,
+            created_at=datetime.now(timezone.utc),
+            oauth_refresh_token=encrypted_refresh.ciphertext,
+            oauth_access_token=encrypted_access.ciphertext if encrypted_access else None,
+            oauth_token_expires_at=expires_at,
+            oauth_scopes=list(scopes),
+            oauth_subject=subject,
+            oauth_email=canonical_email,
+        )
+        self._next_id += 1
+        self._accounts[account.id] = account
         return account
 
     def list(self) -> list[AccountRecord]:
@@ -125,6 +354,12 @@ class AccountService:
         if account.user_id != user_id:
             raise AccountNotFoundError(account_id)
         return account
+
+    def get_for_user_by_name(self, user_id: int, name: str) -> AccountRecord:
+        for account in self._accounts.values():
+            if account.user_id == user_id and account.name == name:
+                return account
+        raise AccountNotFoundError(name)
 
     def authenticate_key(self, raw_key: str) -> AccountRecord:
         parts = parse_api_key(raw_key)
@@ -168,9 +403,35 @@ class AccountService:
         account.key_version = encrypted.key_version
         return account
 
+    def update_name_for_user(self, user_id: int, account_id: int, name: str) -> AccountRecord:
+        validate_mailbox_name(name)
+        account = self.get_for_user(user_id, account_id)
+        if any(item.id != account_id and item.user_id == user_id and item.name == name for item in self._accounts.values()):
+            raise DuplicateMailboxNameError(name)
+        account.name = name
+        return account
+
     def get_password_for_imap(self, account_id: int) -> str:
         account = self.get(account_id)
+        if account.encrypted_password is None or account.key_version is None:
+            raise AccountNotFoundError(account_id)
         return self._cipher.decrypt(account.encrypted_password, account.key_version)
+
+    def get_credential_for_runtime(self, account_id: int) -> AppPasswordCredential | OAuth2Credential:
+        account = self.get(account_id)
+        if account.auth_type == "app_password":
+            if account.encrypted_password is None or account.key_version is None:
+                raise AccountNotFoundError(account_id)
+            return AppPasswordCredential(password=self._cipher.decrypt(account.encrypted_password, account.key_version))
+        if account.auth_type == "oauth2":
+            if account.oauth_access_token is None or account.key_version is None:
+                raise MailboxReconnectRequiredError(account_id)
+            return OAuth2Credential(
+                access_token=self._cipher.decrypt(account.oauth_access_token, account.key_version),
+                scopes=tuple(account.oauth_scopes or ()),
+                expires_at=account.oauth_token_expires_at,
+            )
+        raise AccountNotFoundError(account_id)
 
     def delete(self, account_id: int) -> None:
         if account_id not in self._accounts:
@@ -194,12 +455,14 @@ class RepositoryAccountService:
         cipher: CredentialCipher,
         token_hash_keys: dict[int, bytes],
         active_token_hash_version: int,
+        oauth_refreshers: dict[str, object] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._audit_session_factory = audit_session_factory
         self._cipher = cipher
         self._token_hash_keys = token_hash_keys
         self._active_token_hash_version = active_token_hash_version
+        self._oauth_refreshers = oauth_refreshers or {}
 
     def _repo(self, session):
         from postara.repositories import AccountRepository
@@ -269,6 +532,136 @@ class RepositoryAccountService:
                 )
         return account
 
+    async def create_with_app_password(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        password: str,
+        audit_context: dict | None = None,
+    ):
+        return await self.create_for_user(
+            user_id=user_id,
+            name=name,
+            email=email,
+            provider=provider,
+            password=password,
+            audit_context=audit_context,
+        )
+
+    async def start_app_password_verification(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        password: str,
+        code: str,
+        expires_at: datetime,
+        audit_context: dict | None = None,
+    ):
+        from postara.repositories import AuditOutboxRepository
+
+        async with self._session_factory() as session:
+            async with session.begin():
+                repo = self._repo(session)
+                outbox = AuditOutboxRepository(session)
+                verification = await repo.create_pending_app_password_verification(
+                    user_id=user_id,
+                    name=name,
+                    email=email,
+                    provider=provider,
+                    password=password,
+                    code=code,
+                    expires_at=expires_at,
+                )
+                await outbox.enqueue(
+                    self._audit_event(
+                        audit_context,
+                        action="mailbox.app_password_verify_sent",
+                        status="success",
+                        extra={"email": email, "provider": provider, "auth_type": "app_password"},
+                    )
+                )
+        return verification
+
+    async def complete_app_password_verification(
+        self,
+        *,
+        user_id: int,
+        verification_id: str,
+        code: str,
+        audit_context: dict | None = None,
+    ):
+        from postara.repositories import AuditOutboxRepository
+
+        async with self._session_factory() as session:
+            async with session.begin():
+                repo = self._repo(session)
+                outbox = AuditOutboxRepository(session)
+                account = await repo.complete_pending_app_password_verification(
+                    user_id=user_id,
+                    verification_id=verification_id,
+                    code=code,
+                )
+                await outbox.enqueue(
+                    self._audit_event(
+                        audit_context,
+                        action="mailbox.app_password_verify_completed",
+                        status="success",
+                        target_account_id=account.id,
+                        extra={"email": account.email, "provider": account.provider, "auth_type": "app_password"},
+                    )
+                )
+        return account
+
+    async def create_with_oauth(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        refresh_token: str,
+        access_token: str | None,
+        expires_at: datetime | None,
+        scopes: tuple[str, ...],
+        subject: str | None,
+        oauth_email: str,
+        audit_context: dict | None = None,
+    ):
+        from postara.repositories import AuditOutboxRepository
+
+        async with self._session_factory() as session:
+            async with session.begin():
+                repo = self._repo(session)
+                outbox = AuditOutboxRepository(session)
+                account = await repo.create_with_oauth(
+                    user_id=user_id,
+                    name=name,
+                    email=email,
+                    provider=provider,
+                    refresh_token=refresh_token,
+                    access_token=access_token,
+                    expires_at=expires_at,
+                    scopes=scopes,
+                    subject=subject,
+                    oauth_email=oauth_email,
+                )
+                await outbox.enqueue(
+                    self._audit_event(
+                        audit_context,
+                        action="mailbox.oauth_completed",
+                        status="success",
+                        target_account_id=account.id,
+                        extra={"email": account.email, "provider": provider, "auth_type": "oauth2"},
+                    )
+                )
+        return account
+
     async def list(self):
         async with self._session_factory() as session:
             return await self._repo(session).list()
@@ -280,6 +673,35 @@ class RepositoryAccountService:
     async def get_for_user(self, user_id: int, account_id: int):
         async with self._session_factory() as session:
             return await self._repo(session).get_for_user(user_id, account_id)
+
+    async def get_for_user_by_name(self, user_id: int, name: str):
+        async with self._session_factory() as session:
+            return await self._repo(session).get_for_user_by_name(user_id, name)
+
+    async def update_name_for_user(
+        self,
+        user_id: int,
+        account_id: int,
+        name: str,
+        audit_context: dict | None = None,
+    ):
+        from postara.repositories import AuditOutboxRepository
+
+        async with self._session_factory() as session:
+            async with session.begin():
+                repo = self._repo(session)
+                outbox = AuditOutboxRepository(session)
+                account = await repo.update_name_for_user(user_id, account_id, name)
+                await outbox.enqueue(
+                    self._audit_event(
+                        audit_context,
+                        action="mailbox.name_updated",
+                        status="success",
+                        target_account_id=account.id,
+                        extra={"name": account.name},
+                    )
+                )
+        return account
 
     async def require_key_for_account(self, account_id: int, raw_key: str):
         async with self._session_factory() as session:
@@ -356,6 +778,75 @@ class RepositoryAccountService:
         async with self._session_factory() as session:
             account = await self._repo(session).get_by_id(account_id)
             return self._cipher.decrypt(account.encrypted_password, account.key_version)
+
+    async def get_credential_for_runtime(
+        self,
+        account_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> AppPasswordCredential | OAuth2Credential:
+        from postara.repositories import AuditOutboxRepository
+
+        async with self._session_factory() as session:
+            async with session.begin():
+                repo = self._repo(session)
+                outbox = AuditOutboxRepository(session)
+                account = await repo.get_by_id(account_id)
+                if account.auth_type == "app_password":
+                    if account.encrypted_password is None or account.key_version is None:
+                        raise AccountNotFoundError(account_id)
+                    return AppPasswordCredential(
+                        password=self._cipher.decrypt(account.encrypted_password, account.key_version)
+                    )
+                if account.auth_type == "oauth2":
+                    if account.oauth_access_token is None or account.key_version is None:
+                        raise MailboxReconnectRequiredError(account_id)
+                    scopes = tuple(account.oauth_scopes or ())
+                    if self._oauth_token_needs_refresh(account.oauth_token_expires_at, now=now):
+                        account, scopes = await self._refresh_oauth_access_token(repo, account, scopes)
+                        await outbox.enqueue(
+                            self._audit_event(
+                                None,
+                                action="mailbox.oauth_token_refreshed",
+                                status="success",
+                                target_account_id=account.id,
+                                extra={"provider": account.provider, "auth_type": "oauth2"},
+                            )
+                        )
+                    return OAuth2Credential(
+                        access_token=self._cipher.decrypt(account.oauth_access_token, account.key_version),
+                        scopes=scopes,
+                        expires_at=account.oauth_token_expires_at,
+                    )
+                raise AccountNotFoundError(account_id)
+
+    def _oauth_token_needs_refresh(self, expires_at: datetime | None, *, now: datetime | None = None) -> bool:
+        if expires_at is None:
+            return False
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at <= current_time + timedelta(minutes=5)
+
+    async def _refresh_oauth_access_token(self, repo, account, scopes: tuple[str, ...]):
+        refresher = self._oauth_refreshers.get(account.provider)
+        if refresher is None or account.oauth_refresh_token is None or account.key_version is None:
+            raise MailboxReconnectRequiredError(account.id)
+        refresh_token = self._cipher.decrypt(account.oauth_refresh_token, account.key_version)
+        try:
+            result = await refresher.refresh_access_token(refresh_token=refresh_token, scopes=scopes)
+        except OAuthExchangeError as exc:
+            raise MailboxReconnectRequiredError(account.id) from exc
+        account = await repo.update_oauth_tokens(
+            account.id,
+            refresh_token=refresh_token,
+            access_token=result.access_token,
+            expires_at=result.expires_at,
+            scopes=result.scopes,
+        )
+        return account, result.scopes
 
     async def delete(self, account_id: int, audit_context: dict | None = None) -> None:
         from postara.repositories import AuditOutboxRepository

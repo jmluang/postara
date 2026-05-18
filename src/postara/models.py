@@ -93,6 +93,7 @@ class AccountORM(Base):
     __tablename__ = "accounts"
     __table_args__ = (
         UniqueConstraint("user_id", "email", name="uq_app_accounts_user_id_email"),
+        UniqueConstraint("user_id", "name", name="uq_app_accounts_user_id_name"),
         {"schema": "app"},
     )
 
@@ -102,11 +103,14 @@ class AccountORM(Base):
     email: Mapped[str] = mapped_column(Text, index=True)
     provider: Mapped[str] = mapped_column(Text, default="gmail")
     auth_type: Mapped[str] = mapped_column(Text, default="app_password")
-    encrypted_password: Mapped[bytes] = mapped_column(LargeBinary)
-    key_version: Mapped[int] = mapped_column(SmallInteger)
+    encrypted_password: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    key_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     oauth_refresh_token: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     oauth_access_token: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     oauth_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    oauth_scopes: Mapped[list[str] | None] = mapped_column(JSON_TYPE, nullable=True)
+    oauth_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
+    oauth_email: Mapped[str | None] = mapped_column(Text, nullable=True)
     imap_host: Mapped[str] = mapped_column(Text)
     imap_port: Mapped[int] = mapped_column(Integer)
     api_key_prefix: Mapped[str] = mapped_column(String(8), unique=True, index=True)
@@ -131,6 +135,44 @@ class AccountORM(Base):
             "api_key_prefix": self.api_key_prefix,
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
+        }
+
+
+class PendingMailboxVerificationORM(Base):
+    __tablename__ = "pending_mailbox_verifications"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ID_TYPE, index=True)
+    mailbox_id: Mapped[int | None] = mapped_column(ID_TYPE, nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(Text)
+    auth_type: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    email: Mapped[str] = mapped_column(Text, index=True)
+    encrypted_password: Mapped[bytes] = mapped_column(LargeBinary)
+    key_version: Mapped[int] = mapped_column(SmallInteger)
+    code_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    code_hash_version: Mapped[int] = mapped_column(SmallInteger, default=1)
+    attempts: Mapped[int] = mapped_column(SmallInteger, default=0)
+    status: Mapped[str] = mapped_column(Text, default="verifying", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def to_dto(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "mailbox_id": self.mailbox_id,
+            "provider": self.provider,
+            "auth_type": self.auth_type,
+            "name": self.name,
+            "email": self.email,
+            "attempts": self.attempts,
+            "status": self.status,
+            "expires_at": self.expires_at,
+            "created_at": self.created_at,
+            "verified_at": self.verified_at,
         }
 
 

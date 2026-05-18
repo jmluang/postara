@@ -117,6 +117,29 @@ def verify_api_key_hash(raw_key: str, expected_hash: bytes, token_hash_key: byte
     return hmac.compare_digest(actual, expected_hash)
 
 
+def generate_verification_code() -> str:
+    return "".join(secrets.choice("0123456789") for _ in range(6))
+
+
+def hash_verification_code(raw_code: str, key: bytes | str, *, version: int) -> tuple[int, bytes]:
+    if not re.fullmatch(r"[0-9]{6}", raw_code):
+        raise TokenFormatError("Invalid verification code format.")
+    digest = hmac.new(
+        key=_decode_key_material(key),
+        msg=raw_code.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    return version, digest
+
+
+def verify_verification_code_hash(raw_code: str, expected_hash: bytes, key: bytes | str) -> bool:
+    try:
+        _version, actual = hash_verification_code(raw_code, key, version=1)
+    except (TokenFormatError, ValueError):
+        return False
+    return hmac.compare_digest(actual, expected_hash)
+
+
 def redact_token_for_display(raw_key: str) -> str:
     parts = parse_api_key(raw_key)
     return f"pst_{parts.kind}_{parts.prefix}..."

@@ -31,6 +31,8 @@ def sanitize_extra(value: Any) -> Any:
         return clean
     if isinstance(value, list):
         return [sanitize_extra(item) for item in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
     return deepcopy(value)
 
 
@@ -57,7 +59,7 @@ class AuditEvent:
     def to_record(self) -> dict[str, Any]:
         event = self.sanitized()
         return {
-            "timestamp": event.timestamp,
+            "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             "action": event.action,
             "actor_type": event.actor_type,
             "actor_id": event.actor_id,

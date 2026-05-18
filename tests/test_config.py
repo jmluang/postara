@@ -9,6 +9,7 @@ def test_settings_defaults_keep_app_and_audit_database_separate():
     assert settings.app_schema == "app"
     assert settings.audit_schema == "audit"
     assert settings.imap_workers == 8
+    assert settings.deployment_mode == "self_host"
 
 
 def test_settings_accepts_independent_audit_database_url():
@@ -80,3 +81,11 @@ def test_settings_normalizes_plain_postgres_urls_to_asyncpg():
     assert settings.app_database_url.startswith("postgresql+asyncpg://")
     assert settings.audit_database_url.startswith("postgresql+asyncpg://")
     assert settings.direct_url.startswith("postgresql+asyncpg://")
+
+
+def test_settings_accepts_hosted_deployment_mode(monkeypatch):
+    monkeypatch.setenv("POSTARA_DEPLOYMENT_MODE", "hosted")
+
+    settings = Settings()
+
+    assert settings.deployment_mode == "hosted"

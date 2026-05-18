@@ -6,10 +6,14 @@ from postara.accounts import AccountService
 from postara.api import create_app
 
 
-def test_app_route_serves_built_react_workspace(tmp_path: Path):
-    (tmp_path / "assets").mkdir()
-    (tmp_path / "assets" / "app.js").write_text("console.log('postara')", encoding="utf-8")
-    (tmp_path / "index.html").write_text(
+def test_frontend_routes_serve_landing_and_workspace(tmp_path: Path):
+    app_dist = tmp_path / "app-dist"
+    site_dist = tmp_path / "site-dist"
+    (app_dist / "assets").mkdir(parents=True)
+    (site_dist / "assets").mkdir(parents=True)
+    (app_dist / "assets" / "app.js").write_text("console.log('postara app')", encoding="utf-8")
+    (site_dist / "assets" / "site.js").write_text("console.log('postara site')", encoding="utf-8")
+    (app_dist / "index.html").write_text(
         """<!doctype html>
 <html lang="en">
 <body data-postara-app="react-workspace">
@@ -20,28 +24,43 @@ def test_app_route_serves_built_react_workspace(tmp_path: Path):
 """,
         encoding="utf-8",
     )
+    (site_dist / "index.html").write_text(
+        """<!doctype html>
+<html lang="en">
+<body data-postara-site="landing">
+  <div id="root"></div>
+  <script type="module" src="/assets/site.js"></script>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
 
-    client = TestClient(create_app(accounts=AccountService(), frontend_dist=tmp_path))
+    client = TestClient(create_app(accounts=AccountService(), frontend_dist=app_dist, frontend_site_dist=site_dist))
 
-    response = client.get("/app")
+    root_response = client.get("/")
+    privacy_response = client.get("/privacy")
+    app_response = client.get("/app")
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert 'data-postara-app="react-workspace"' in response.text
-    assert '<div id="root"></div>' in response.text
-    assert 'type="module"' in response.text
-    assert "/assets/app.js" in response.text
-    assert "/admin/accounts" not in response.text
-    assert "Admin Token" not in response.text
+    assert root_response.status_code == 200
+    assert root_response.headers["content-type"].startswith("text/html")
+    assert 'data-postara-site="landing"' in root_response.text
+    assert "/assets/site.js" in root_response.text
+    assert privacy_response.status_code == 200
+    assert 'data-postara-site="landing"' in privacy_response.text
+    assert app_response.status_code == 200
+    assert 'data-postara-app="react-workspace"' in app_response.text
+    assert "/assets/app.js" in app_response.text
+    assert "/admin/accounts" not in app_response.text
+    assert "Admin Token" not in app_response.text
 
-    root_response = client.get("/", follow_redirects=False)
-    assert root_response.status_code in {307, 308}
-    assert root_response.headers["location"] == "/app"
+    app_asset_response = client.get("/assets/app.js")
+    site_asset_response = client.get("/assets/site.js")
 
-    asset_response = client.get("/assets/app.js")
-
-    assert asset_response.status_code == 200
-    assert "postara" in asset_response.text
+    assert app_asset_response.status_code == 200
+    assert "postara app" in app_asset_response.text
+    assert site_asset_response.status_code == 200
+    assert "postara site" in site_asset_response.text
 
 
 def test_workspace_serves_brand_icons():

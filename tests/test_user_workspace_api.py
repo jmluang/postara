@@ -1,7 +1,9 @@
 from fastapi.testclient import TestClient
+from urllib.parse import quote
 
 from postara.accounts import AccountService
 from postara.api import create_app
+from postara.credentials import AppPasswordCredential
 from postara.providers.base import AuthenticationError, Folder, Message, MessageSummary
 from postara.users import UserService
 
@@ -75,12 +77,12 @@ def register(client: TestClient, email: str) -> str:
     return response.json()["session_token"]
 
 
-def create_mailbox(client: TestClient, token: str, email: str = "work@example.com") -> dict:
+def create_mailbox(client: TestClient, token: str, email: str = "work@example.com", name: str = "Work") -> dict:
     response = client.post(
         "/mailboxes",
         headers={"Authorization": f"Bearer {token}"},
         json={
-            "name": "Work",
+            "name": name,
             "email": email,
             "provider": "gmail",
             "password": "app-password",
@@ -88,6 +90,10 @@ def create_mailbox(client: TestClient, token: str, email: str = "work@example.co
     )
     assert response.status_code == 201
     return response.json()["mailbox"]
+
+
+def mailbox_path(mailbox: dict) -> str:
+    return quote(mailbox["name"], safe="")
 
 
 def test_user_creates_and_lists_only_own_mailboxes():
@@ -120,7 +126,7 @@ def test_different_users_can_connect_same_mailbox_email():
 def test_user_can_create_api_key_and_access_own_mailbox_messages():
     client = workspace_client()
     token = register(client, "user@example.com")
-    mailbox = create_mailbox(client, token)
+    mailbox = create_mailbox(client, token, name="work-gmail")
 
     key_response = client.post(
         "/api-keys",
@@ -132,22 +138,129 @@ def test_user_can_create_api_key_and_access_own_mailbox_messages():
     raw_key = key_response.json()["api_key"]
     assert raw_key.startswith("pst_live_")
 
-    messages = client.get(f"/mailboxes/{mailbox['id']}/messages", headers={"X-Api-Key": raw_key})
+    mailbox_name = quote(mailbox["name"], safe="")
+    messages = client.get(f"/mailboxes/{mailbox_name}/messages", headers={"X-Api-Key": raw_key})
     assert messages.status_code == 200
     assert messages.json()["messages"][0]["uid"] == "123"
 
-    detail = client.get(f"/mailboxes/{mailbox['id']}/messages/123", headers={"X-Api-Key": raw_key})
+    detail = client.get(f"/mailboxes/{mailbox_name}/messages/123", headers={"X-Api-Key": raw_key})
     assert detail.status_code == 200
     assert detail.json()["mailbox_id"] == mailbox["id"]
+    assert detail.json()["mailbox_name"] == "work-gmail"
     assert detail.json()["message"]["html"] == "<p>html body</p>"
+
+
+def test_mailbox_api_name_must_be_url_safe_ascii():
+    client = workspace_client()
+    token = register(client, "bad-name@example.com")
+
+    response = client.post(
+        "/mailboxes",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "Work Gmail",
+            "email": "work@example.com",
+            "provider": "gmail",
+            "password": "app-password",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_api_key_can_list_accessible_mailboxes_by_api_name():
+    client = workspace_client()
+    token = register(client, "list-mailboxes@example.com")
+    first = create_mailbox(client, token, email="first-mailbox@example.com", name="primary-gmail")
+    second = create_mailbox(client, token, email="second-mailbox@example.com", name="receipts-gmail")
+    all_key_response = client.post(
+        "/api-keys",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "All mailboxes"},
+    )
+    scoped_key_response = client.post(
+        "/api-keys",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Receipts only", "mailbox_id": second["id"], "scopes": ["read"]},
+    )
+
+    all_mailboxes = client.get("/mailboxes", headers={"X-Api-Key": all_key_response.json()["api_key"]})
+    scoped_mailboxes = client.get("/mailboxes", headers={"X-Api-Key": scoped_key_response.json()["api_key"]})
+
+    assert all_mailboxes.status_code == 200
+    assert [mailbox["name"] for mailbox in all_mailboxes.json()["mailboxes"]] == [first["name"], second["name"]]
+    assert all_mailboxes.json()["mailboxes"][0]["api_path"] == f"/mailboxes/{mailbox_path(first)}"
+    assert scoped_mailboxes.status_code == 200
+    assert [mailbox["name"] for mailbox in scoped_mailboxes.json()["mailboxes"]] == [second["name"]]
+
+
+def test_user_cannot_create_duplicate_mailbox_api_name():
+    client = workspace_client()
+    token = register(client, "duplicate-name@example.com")
+    create_mailbox(client, token, email="first@example.com", name="Support")
+
+    response = client.post(
+        "/mailboxes",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "Support",
+            "email": "second@example.com",
+            "provider": "gmail",
+            "password": "app-password",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "mailbox_name_already_exists"
+
+
+def test_user_can_rename_mailbox_api_name():
+    client = workspace_client()
+    token = register(client, "rename@example.com")
+    mailbox = create_mailbox(client, token, name="old-name")
+    key_response = client.post(
+        "/api-keys",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Production"},
+    )
+
+    response = client.patch(
+        f"/mailboxes/{mailbox['id']}/name",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "new-name"},
+    )
+    old_path = client.get("/mailboxes/old-name/messages", headers={"X-Api-Key": key_response.json()["api_key"]})
+    new_path = client.get("/mailboxes/new-name/messages", headers={"X-Api-Key": key_response.json()["api_key"]})
+
+    assert response.status_code == 200
+    assert response.json()["mailbox"]["name"] == "new-name"
+    assert old_path.status_code == 404
+    assert new_path.status_code == 200
+
+
+def test_user_cannot_rename_mailbox_to_existing_api_name():
+    client = workspace_client()
+    token = register(client, "rename-duplicate@example.com")
+    first = create_mailbox(client, token, email="first@example.com", name="first")
+    second = create_mailbox(client, token, email="second@example.com", name="second")
+
+    response = client.patch(
+        f"/mailboxes/{second['id']}/name",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": first["name"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "mailbox_name_already_exists"
 
 
 def test_api_key_scope_limits_mailbox_and_operations():
     runtime = FakeMailboxRuntime()
     client = workspace_client(runtime)
     token = register(client, "scoped@example.com")
-    allowed = create_mailbox(client, token, email="allowed@example.com")
-    denied = create_mailbox(client, token, email="denied@example.com")
+    allowed = create_mailbox(client, token, email="allowed@example.com", name="Allowed")
+    denied = create_mailbox(client, token, email="denied@example.com", name="Denied")
     key_response = client.post(
         "/api-keys",
         headers={"Authorization": f"Bearer {token}"},
@@ -155,10 +268,10 @@ def test_api_key_scope_limits_mailbox_and_operations():
     )
     raw_key = key_response.json()["api_key"]
 
-    allowed_messages = client.get(f"/mailboxes/{allowed['id']}/messages", headers={"X-Api-Key": raw_key})
-    denied_messages = client.get(f"/mailboxes/{denied['id']}/messages", headers={"X-Api-Key": raw_key})
+    allowed_messages = client.get(f"/mailboxes/{mailbox_path(allowed)}/messages", headers={"X-Api-Key": raw_key})
+    denied_messages = client.get(f"/mailboxes/{mailbox_path(denied)}/messages", headers={"X-Api-Key": raw_key})
     mark_seen = client.post(
-        f"/mailboxes/{allowed['id']}/messages/123/seen",
+        f"/mailboxes/{mailbox_path(allowed)}/messages/123/seen",
         headers={"X-Api-Key": raw_key},
         json={"seen": True},
     )
@@ -184,18 +297,18 @@ def test_mark_seen_uses_scoped_key_and_session():
     )
 
     key_mark = client.post(
-        f"/mailboxes/{mailbox['id']}/messages/123/seen",
+        f"/mailboxes/{mailbox_path(mailbox)}/messages/123/seen",
         headers={"X-Api-Key": key_response.json()["api_key"]},
         json={"seen": True},
     )
     session_mark = client.post(
-        f"/mailboxes/{mailbox['id']}/messages/124/seen",
+        f"/mailboxes/{mailbox_path(mailbox)}/messages/124/seen",
         headers={"Authorization": f"Bearer {token}"},
         json={"seen": False},
     )
 
     assert key_mark.status_code == 200
-    assert key_mark.json() == {"mailbox_id": mailbox["id"], "uid": "123", "seen": True}
+    assert key_mark.json() == {"mailbox_id": mailbox["id"], "mailbox_name": mailbox["name"], "uid": "123", "seen": True}
     assert session_mark.status_code == 200
     assert runtime.mark_seen_calls == [
         (mailbox["id"], "INBOX", "123", True),
@@ -209,14 +322,14 @@ def test_user_session_can_browse_mailbox_without_raw_api_key():
     token = register(client, "session-browser@example.com")
     mailbox = create_mailbox(client, token)
 
-    folders = client.get(f"/mailboxes/{mailbox['id']}/folders", headers={"Authorization": f"Bearer {token}"})
+    folders = client.get(f"/mailboxes/{mailbox_path(mailbox)}/folders", headers={"Authorization": f"Bearer {token}"})
     messages = client.get(
-        f"/mailboxes/{mailbox['id']}/messages",
+        f"/mailboxes/{mailbox_path(mailbox)}/messages",
         headers={"Authorization": f"Bearer {token}"},
         params={"folder": "Receipts", "cursor": "122", "limit": 1},
     )
     detail = client.get(
-        f"/mailboxes/{mailbox['id']}/messages/123",
+        f"/mailboxes/{mailbox_path(mailbox)}/messages/123",
         headers={"Authorization": f"Bearer {token}"},
         params={"folder": "Receipts"},
     )
@@ -225,7 +338,7 @@ def test_user_session_can_browse_mailbox_without_raw_api_key():
     assert messages.status_code == 200
     assert messages.json()["next_cursor"] == "123"
     assert detail.status_code == 200
-    assert runtime.folder_calls == [(mailbox["id"], "app-password")]
+    assert runtime.folder_calls == [(mailbox["id"], AppPasswordCredential(password="app-password"))]
     assert runtime.list_message_calls == [(mailbox["id"], "Receipts", "122")]
     assert runtime.fetch_message_calls == [(mailbox["id"], "Receipts", "123")]
 
@@ -248,13 +361,13 @@ def test_user_can_disable_and_enable_api_key_status():
         json={"status": "disabled"},
     )
     disabled_list = client.get("/api-keys", headers={"Authorization": f"Bearer {token}"})
-    disabled_messages = client.get(f"/mailboxes/{mailbox['id']}/messages", headers={"X-Api-Key": raw_key})
+    disabled_messages = client.get(f"/mailboxes/{mailbox_path(mailbox)}/messages", headers={"X-Api-Key": raw_key})
     enable = client.patch(
         f"/api-keys/{key_id}/status",
         headers={"Authorization": f"Bearer {token}"},
         json={"status": "active"},
     )
-    enabled_messages = client.get(f"/mailboxes/{mailbox['id']}/messages", headers={"X-Api-Key": raw_key})
+    enabled_messages = client.get(f"/mailboxes/{mailbox_path(mailbox)}/messages", headers={"X-Api-Key": raw_key})
 
     assert disable.status_code == 200
     assert disable.json()["api_key"]["status"] == "disabled"
@@ -280,7 +393,7 @@ def test_user_can_delete_api_key_permanently():
 
     delete = client.delete(f"/api-keys/{key_id}", headers={"Authorization": f"Bearer {token}"})
     listed = client.get("/api-keys", headers={"Authorization": f"Bearer {token}"})
-    messages = client.get(f"/mailboxes/{mailbox['id']}/messages", headers={"X-Api-Key": raw_key})
+    messages = client.get(f"/mailboxes/{mailbox_path(mailbox)}/messages", headers={"X-Api-Key": raw_key})
     enable = client.patch(
         f"/api-keys/{key_id}/status",
         headers={"Authorization": f"Bearer {token}"},
@@ -303,7 +416,7 @@ def test_user_message_detail_returns_not_found_for_unknown_uid():
         json={"name": "Production"},
     )
 
-    response = client.get(f"/mailboxes/{mailbox['id']}/messages/999", headers={"X-Api-Key": key_response.json()["api_key"]})
+    response = client.get(f"/mailboxes/{mailbox_path(mailbox)}/messages/999", headers={"X-Api-Key": key_response.json()["api_key"]})
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "message_not_found"
@@ -321,7 +434,7 @@ def test_user_api_key_cannot_access_another_users_mailbox():
     )
 
     response = client.get(
-        f"/mailboxes/{mailbox['id']}/messages",
+        f"/mailboxes/{mailbox_path(mailbox)}/messages",
         headers={"X-Api-Key": key_response.json()["api_key"]},
     )
 

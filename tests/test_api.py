@@ -29,7 +29,7 @@ def test_messages_rejects_unsupported_query_with_standard_error():
     client = TestClient(create_app(accounts=accounts, users=users))
 
     response = client.get(
-        f"/mailboxes/{account.id}/messages",
+        f"/mailboxes/{account.name}/messages",
         headers={"X-Api-Key": api_key},
         params={"text_contains": "invoice"},
     )

@@ -74,14 +74,27 @@ def load_runtime_secrets(settings: Settings) -> RuntimeSecrets:
 
 def create_repository_account_service(settings: Settings):
     from postara.accounts import RepositoryAccountService
+    from postara.oauth import GoogleOAuthClient
+    from postara.providers.registry import ProviderRegistry
 
     runtime_secrets = load_runtime_secrets(settings)
+    registry = ProviderRegistry.default()
+    oauth_refreshers = {}
+    if settings.google_oauth_client_id and settings.google_oauth_client_secret:
+        oauth_config = registry.capabilities_for("gmail").oauth
+        if oauth_config is not None:
+            oauth_refreshers["gmail"] = GoogleOAuthClient(
+                config=oauth_config,
+                client_id=settings.google_oauth_client_id,
+                client_secret=settings.google_oauth_client_secret,
+            )
     return RepositoryAccountService(
         create_app_session_factory(settings),
         audit_session_factory=create_audit_session_factory(settings),
         cipher=runtime_secrets.cipher,
         token_hash_keys=runtime_secrets.token_hash_keys,
         active_token_hash_version=runtime_secrets.active_token_hash_version,
+        oauth_refreshers=oauth_refreshers,
     )
 
 

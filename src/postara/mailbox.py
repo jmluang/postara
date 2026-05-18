@@ -6,6 +6,7 @@ from imap_tools import MailBox
 from imap_tools.errors import MailboxLoginError
 
 from postara.config import Settings
+from postara.credentials import AppPasswordCredential, OAuth2Credential
 from postara.imap_executor import ImapExecutionTimeout, ImapExecutor
 from postara.providers.base import AuthenticationError, MessageQuery, ProviderConnectionError
 from postara.providers.gmail import GmailAdapter
@@ -35,14 +36,24 @@ class MailboxRuntime:
             return self._adapter
         return self._registry.get(account.provider)
 
-    def _with_mailbox(self, account, password: str, callback):
+    def _with_mailbox(self, account, credential: str | AppPasswordCredential | OAuth2Credential, callback):
+        if isinstance(credential, str):
+            credential = AppPasswordCredential(password=credential)
+
         def work():
             try:
-                with MailBox(
+                mailbox = MailBox(
                     account.imap_host,
                     port=account.imap_port,
                     timeout=self._timeout_seconds,
-                ).login(account.email, password) as mailbox:
+                )
+                if isinstance(credential, AppPasswordCredential):
+                    authenticated = mailbox.login(account.email, credential.password)
+                elif isinstance(credential, OAuth2Credential):
+                    authenticated = mailbox.xoauth2(account.email, credential.access_token)
+                else:
+                    raise AuthenticationError("Unsupported mailbox credential.")
+                with authenticated as mailbox:
                     return callback(mailbox)
             except (imaplib.IMAP4.error, MailboxLoginError) as exc:
                 raise AuthenticationError("IMAP authentication failed.") from exc
@@ -73,30 +84,37 @@ class MailboxRuntime:
         except ImapExecutionTimeout as exc:
             raise ProviderConnectionError("IMAP operation timed out.") from exc
 
-    def list_messages(self, account, password: str, folder: str, query: MessageQuery):
+    def list_messages(self, account, credential: str | AppPasswordCredential | OAuth2Credential, folder: str, query: MessageQuery):
         return self._with_mailbox(
             account,
-            password,
+            credential,
             lambda mailbox: self._adapter_for(account).list_messages(mailbox, folder, query),
         )
 
-    def list_folders(self, account, password: str):
+    def list_folders(self, account, credential: str | AppPasswordCredential | OAuth2Credential):
         return self._with_mailbox(
             account,
-            password,
+            credential,
             lambda mailbox: self._adapter_for(account).list_folders(mailbox),
         )
 
-    def fetch_message(self, account, password: str, folder: str, uid: str):
+    def fetch_message(self, account, credential: str | AppPasswordCredential | OAuth2Credential, folder: str, uid: str):
         return self._with_mailbox(
             account,
-            password,
+            credential,
             lambda mailbox: self._adapter_for(account).fetch_message(mailbox, folder, uid),
         )
 
-    def mark_seen(self, account, password: str, folder: str, uid: str, seen: bool) -> None:
+    def mark_seen(
+        self,
+        account,
+        credential: str | AppPasswordCredential | OAuth2Credential,
+        folder: str,
+        uid: str,
+        seen: bool,
+    ) -> None:
         return self._with_mailbox(
             account,
-            password,
+            credential,
             lambda mailbox: self._adapter_for(account).mark_seen(mailbox, folder, uid, seen),
         )

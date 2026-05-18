@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic import model_validator
@@ -28,6 +29,19 @@ class Settings(BaseSettings):
     audit_schema: str = "audit"
     imap_workers: int = 8
     imap_timeout_seconds: float = 30.0
+    deployment_mode: Literal["self_host", "hosted"] = Field(
+        default="self_host",
+        validation_alias=AliasChoices("POSTARA_DEPLOYMENT_MODE", "DEPLOYMENT_MODE"),
+    )
+    google_oauth_client_id: str | None = Field(default=None, validation_alias="GOOGLE_OAUTH_CLIENT_ID")
+    google_oauth_client_secret: str | None = Field(default=None, validation_alias="GOOGLE_OAUTH_CLIENT_SECRET")
+    google_oauth_redirect_uri: str | None = Field(default=None, validation_alias="GOOGLE_OAUTH_REDIRECT_URI")
+    google_oauth_scopes: list[str] = []
+    oauth_state_secret_v1: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("OAUTH_STATE_SECRET_V1", "OAUTH_STATE_SECRET"),
+    )
+    oauth_state_active_version: int = Field(default=1, validation_alias="OAUTH_STATE_ACTIVE_VERSION")
     secrets_dir: str = Field(
         default="/etc/postara/secrets",
         validation_alias=AliasChoices("POSTARA_SECRETS_DIR", "SECRETS_DIR"),
@@ -99,6 +113,13 @@ def _load_config_defaults(config_path: str | None) -> dict:
         "db_password_file": database.get("password_file"),
         "app_schema": database.get("app_schema"),
         "audit_schema": database.get("audit_schema"),
+        "deployment_mode": data.get("deployment_mode"),
+        "google_oauth_client_id": data.get("google_oauth_client_id"),
+        "google_oauth_client_secret": data.get("google_oauth_client_secret"),
+        "google_oauth_redirect_uri": data.get("google_oauth_redirect_uri"),
+        "google_oauth_scopes": data.get("google_oauth_scopes"),
+        "oauth_state_secret_v1": data.get("oauth_state_secret_v1"),
+        "oauth_state_active_version": data.get("oauth_state_active_version"),
         "secrets_dir": secrets.get("directory"),
         "imap_workers": imap.get("workers"),
         "imap_timeout_seconds": imap.get("read_timeout_seconds") or imap.get("connect_timeout_seconds"),

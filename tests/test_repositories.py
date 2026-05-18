@@ -6,7 +6,11 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from postara.crypto import CredentialCipher
-from postara.models import AccountORM, AuditEventORM, AuditOutboxORM, Base
+from postara.accounts import MailboxVerificationFailedError, RepositoryAccountService
+from postara.audit import AuditEvent
+from postara.credentials import OAuth2Credential
+from postara.models import AccountORM, AuditEventORM, AuditOutboxORM, Base, PendingMailboxVerificationORM
+from postara.oauth import OAuthAccessTokenResult
 from postara.repositories import AccountRepository, AuditOutboxRepository, AuditRepository, dispatch_audit_outbox
 
 
@@ -63,6 +67,33 @@ async def test_audit_outbox_repository_enqueues_sanitized_event(session_factory)
     async with session_factory() as session:
         row = (await session.scalars(select(AuditOutboxORM))).one()
         assert row.event["extra"] == {"api_key": "[REDACTED]", "safe": "ok"}
+
+
+@pytest.mark.anyio
+async def test_audit_outbox_repository_serializes_audit_event_timestamp(session_factory):
+    timestamp = datetime.now(timezone.utc)
+
+    async with session_factory() as session:
+        outbox = AuditOutboxRepository(session)
+        await outbox.enqueue(
+            AuditEvent(
+                timestamp=timestamp,
+                action="mailbox.oauth_completed",
+                actor_type="user",
+                actor_id="1",
+                client_ip="127.0.0.1",
+                user_agent="tests",
+                request_id="req_oauth",
+                target_account_id=1,
+                status="success",
+                extra={"email": "user@example.com"},
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        row = (await session.scalars(select(AuditOutboxORM))).one()
+        assert row.event["timestamp"] == timestamp.isoformat()
 
 
 @pytest.mark.anyio
@@ -192,6 +223,63 @@ def test_account_repository_requires_explicit_token_hash_key():
         AccountRepository(object(), cipher=cipher)
 
 
+class FakeOAuthRefresher:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def refresh_access_token(self, *, refresh_token: str, scopes: tuple[str, ...]) -> OAuthAccessTokenResult:
+        self.calls.append((refresh_token, scopes))
+        return OAuthAccessTokenResult(
+            access_token="new-access-token",
+            expires_at=datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc),
+            scopes=scopes,
+        )
+
+
+@pytest.mark.anyio
+async def test_repository_account_service_refreshes_expired_oauth_access_token(session_factory):
+    cipher = CredentialCipher({1: CredentialCipher.generate_key()}, active_version=1)
+    token_hash_key = base64.urlsafe_b64encode(b"repo-token-hash-key-material-32!!")
+    refresher = FakeOAuthRefresher()
+    service = RepositoryAccountService(
+        session_factory,
+        audit_session_factory=session_factory,
+        cipher=cipher,
+        token_hash_keys={1: token_hash_key},
+        active_token_hash_version=1,
+        oauth_refreshers={"gmail": refresher},
+    )
+    account = await service.create_with_oauth(
+        user_id=1,
+        name="gmail",
+        email="typed@example.com",
+        provider="gmail",
+        refresh_token="refresh-token",
+        access_token="old-access-token",
+        expires_at=datetime(2026, 5, 18, 10, 0, tzinfo=timezone.utc),
+        scopes=("openid", "email", "https://mail.google.com/"),
+        subject="google-subject",
+        oauth_email="provider@example.com",
+    )
+
+    credential = await service.get_credential_for_runtime(
+        account.id,
+        now=datetime(2026, 5, 18, 14, 0, tzinfo=timezone.utc),
+    )
+
+    assert credential == OAuth2Credential(
+        access_token="new-access-token",
+        scopes=("openid", "email", "https://mail.google.com/"),
+        expires_at=datetime(2026, 5, 18, 16, 0, tzinfo=timezone.utc),
+    )
+    assert refresher.calls == [("refresh-token", ("openid", "email", "https://mail.google.com/"))]
+
+    async with session_factory() as session:
+        repo = AccountRepository(session, cipher=cipher, token_hash_key=token_hash_key)
+        persisted = await repo.get_by_id(account.id)
+        assert cipher.decrypt(persisted.oauth_access_token, persisted.key_version) == "new-access-token"
+
+
 @pytest.mark.anyio
 async def test_account_repository_allows_same_email_for_different_users(session_factory):
     cipher = CredentialCipher({1: CredentialCipher.generate_key()}, active_version=1)
@@ -220,3 +308,102 @@ async def test_account_repository_allows_same_email_for_different_users(session_
 
     assert [account.id for account in accounts] == [first.id, second.id]
     assert [account.email for account in accounts] == ["shared@example.com", "shared@example.com"]
+
+
+@pytest.mark.anyio
+async def test_account_repository_creates_oauth_account_with_provider_email(session_factory):
+    cipher = CredentialCipher({1: CredentialCipher.generate_key()}, active_version=1)
+    token_hash_key = base64.urlsafe_b64encode(b"repo-token-hash-key-material-32!!")
+
+    async with session_factory() as session:
+        repo = AccountRepository(session, cipher=cipher, token_hash_key=token_hash_key)
+        account = await repo.create_with_oauth(
+            user_id=1,
+            name="oauth-gmail",
+            email="typed@example.com",
+            provider="gmail",
+            refresh_token="refresh-token",
+            access_token="access-token",
+            expires_at=None,
+            scopes=("openid", "email"),
+            subject="google-sub",
+            oauth_email="provider@example.com",
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        stored = (await session.scalars(select(AccountORM))).one()
+
+        assert stored.id == account.id
+        assert stored.auth_type == "oauth2"
+        assert stored.email == "provider@example.com"
+        assert stored.oauth_email == "provider@example.com"
+        assert stored.oauth_subject == "google-sub"
+        assert stored.oauth_scopes == ["openid", "email"]
+        assert stored.encrypted_password is None
+        assert stored.key_version is not None
+        assert stored.oauth_refresh_token is not None
+        assert stored.oauth_access_token is not None
+        assert b"refresh-token" not in stored.oauth_refresh_token
+
+
+@pytest.mark.anyio
+async def test_account_repository_completes_pending_app_password_verification(session_factory):
+    cipher = CredentialCipher({1: CredentialCipher.generate_key()}, active_version=1)
+    token_hash_key = base64.urlsafe_b64encode(b"repo-token-hash-key-material-32!!")
+
+    async with session_factory() as session:
+        repo = AccountRepository(session, cipher=cipher, token_hash_key=token_hash_key)
+        pending = await repo.create_pending_app_password_verification(
+            user_id=1,
+            name="work",
+            email="work@example.com",
+            provider="gmail",
+            password="app-password",
+            code="123456",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+        )
+        account = await repo.complete_pending_app_password_verification(
+            user_id=1,
+            verification_id=pending.id,
+            code="123456",
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        stored_pending = (await session.scalars(select(PendingMailboxVerificationORM))).one()
+        stored_account = (await session.scalars(select(AccountORM))).one()
+
+        assert stored_pending.status == "verified"
+        assert stored_pending.mailbox_id == account.id
+        assert stored_pending.code_hash != b"123456"
+        assert stored_pending.encrypted_password != b"app-password"
+        assert stored_account.email == "work@example.com"
+        assert stored_account.auth_type == "app_password"
+
+
+@pytest.mark.anyio
+async def test_account_repository_tracks_invalid_pending_verification_attempts(session_factory):
+    cipher = CredentialCipher({1: CredentialCipher.generate_key()}, active_version=1)
+    token_hash_key = base64.urlsafe_b64encode(b"repo-token-hash-key-material-32!!")
+
+    async with session_factory() as session:
+        repo = AccountRepository(session, cipher=cipher, token_hash_key=token_hash_key)
+        pending = await repo.create_pending_app_password_verification(
+            user_id=1,
+            name="work",
+            email="work@example.com",
+            provider="gmail",
+            password="app-password",
+            code="123456",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+        )
+        with pytest.raises(MailboxVerificationFailedError):
+            await repo.complete_pending_app_password_verification(user_id=1, verification_id=pending.id, code="000000")
+        await session.commit()
+
+    async with session_factory() as session:
+        stored_pending = (await session.scalars(select(PendingMailboxVerificationORM))).one()
+
+        assert stored_pending.status == "verifying"
+        assert stored_pending.attempts == 1

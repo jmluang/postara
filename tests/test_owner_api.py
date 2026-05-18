@@ -56,7 +56,7 @@ def test_owner_can_reset_member_password_and_list_mailboxes():
         "/mailboxes",
         headers={"Authorization": f"Bearer {member_token}"},
         json={
-            "name": "Member mailbox",
+            "name": "member-mailbox",
             "email": "mailbox@example.com",
             "provider": "gmail",
             "password": "app-password",

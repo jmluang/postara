@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 
@@ -7,11 +8,32 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from postara.accounts import AccountNotFoundError, DuplicateEmailError
+from postara.accounts import (
+    AccountNotFoundError,
+    DuplicateMailboxNameError,
+    DuplicateEmailError,
+    MailboxVerificationExpiredError,
+    MailboxVerificationFailedError,
+    MailboxVerificationNotFoundError,
+    validate_mailbox_name,
+)
 from postara.audit import AuditEvent, sanitize_extra
 from postara.crypto import CredentialCipher
-from postara.models import AccountORM, AuditEventORM, AuditOutboxORM
-from postara.security import generate_api_key, hash_api_key, parse_api_key, verify_api_key_hash
+from postara.models import AccountORM, AuditEventORM, AuditOutboxORM, PendingMailboxVerificationORM
+from postara.security import (
+    generate_api_key,
+    hash_api_key,
+    hash_verification_code,
+    parse_api_key,
+    verify_api_key_hash,
+    verify_verification_code_hash,
+)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class AccountRepository:
@@ -44,8 +66,10 @@ class AccountRepository:
         password: str,
         user_id: int | None = None,
     ) -> tuple[AccountORM, str]:
+        validate_mailbox_name(name)
         if provider != "gmail":
             raise ValueError("Only gmail is supported in v0.1.")
+        await self._require_unique_account_fields(user_id=user_id, email=email, name=name)
 
         api_key = generate_api_key("live")
         parts = parse_api_key(api_key)
@@ -70,6 +94,142 @@ class AccountRepository:
         except IntegrityError as exc:
             raise DuplicateEmailError(email) from exc
         return account, api_key
+
+    async def create_with_oauth(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        refresh_token: str,
+        access_token: str | None,
+        expires_at: datetime | None,
+        scopes: tuple[str, ...],
+        subject: str | None,
+        oauth_email: str,
+    ) -> AccountORM:
+        canonical_email = oauth_email or email
+        validate_mailbox_name(name)
+        await self._require_unique_account_fields(user_id=user_id, email=canonical_email, name=name)
+        api_key = generate_api_key("live")
+        parts = parse_api_key(api_key)
+        encrypted_refresh = self._cipher.encrypt(refresh_token)
+        encrypted_access = self._cipher.encrypt(access_token) if access_token is not None else None
+        account = AccountORM(
+            user_id=user_id,
+            name=name,
+            email=canonical_email,
+            provider=provider,
+            auth_type="oauth2",
+            encrypted_password=None,
+            key_version=encrypted_refresh.key_version,
+            oauth_refresh_token=encrypted_refresh.ciphertext,
+            oauth_access_token=encrypted_access.ciphertext if encrypted_access else None,
+            oauth_token_expires_at=expires_at,
+            oauth_scopes=list(scopes),
+            oauth_subject=subject,
+            oauth_email=canonical_email,
+            imap_host="imap.gmail.com" if provider == "gmail" else "",
+            imap_port=993 if provider == "gmail" else 0,
+            api_key_prefix=parts.prefix,
+            api_key_hash=hash_api_key(api_key, self._active_token_hash_key()),
+            api_key_hash_version=self._active_token_hash_version,
+        )
+        self._session.add(account)
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            raise DuplicateEmailError(canonical_email) from exc
+        return account
+
+    async def create_pending_app_password_verification(
+        self,
+        *,
+        user_id: int,
+        name: str,
+        email: str,
+        provider: str,
+        password: str,
+        code: str,
+        expires_at: datetime,
+    ) -> PendingMailboxVerificationORM:
+        validate_mailbox_name(name)
+        duplicate = await self._session.scalar(
+            select(AccountORM.id).where(AccountORM.user_id == user_id, AccountORM.email == email).limit(1)
+        )
+        if duplicate is not None:
+            raise DuplicateEmailError(email)
+        duplicate_name = await self._session.scalar(
+            select(AccountORM.id).where(AccountORM.user_id == user_id, AccountORM.name == name).limit(1)
+        )
+        if duplicate_name is not None:
+            raise DuplicateMailboxNameError(name)
+
+        encrypted = self._cipher.encrypt(password)
+        code_hash_version, code_hash = hash_verification_code(
+            code,
+            self._active_token_hash_key(),
+            version=self._active_token_hash_version,
+        )
+        verification = PendingMailboxVerificationORM(
+            id="mbv_" + secrets.token_urlsafe(24),
+            user_id=user_id,
+            mailbox_id=None,
+            provider=provider,
+            auth_type="app_password",
+            name=name,
+            email=email,
+            encrypted_password=encrypted.ciphertext,
+            key_version=encrypted.key_version,
+            code_hash=code_hash,
+            code_hash_version=code_hash_version,
+            attempts=0,
+            status="verifying",
+            expires_at=expires_at,
+        )
+        self._session.add(verification)
+        await self._session.flush()
+        return verification
+
+    async def complete_pending_app_password_verification(
+        self,
+        *,
+        user_id: int,
+        verification_id: str,
+        code: str,
+    ) -> AccountORM:
+        verification = await self._session.get(PendingMailboxVerificationORM, verification_id)
+        if verification is None or verification.user_id != user_id or verification.status != "verifying":
+            raise MailboxVerificationNotFoundError(verification_id)
+
+        now = datetime.now(timezone.utc)
+        if _as_utc(verification.expires_at) <= now:
+            verification.status = "expired"
+            await self._session.flush()
+            raise MailboxVerificationExpiredError(verification_id)
+
+        code_key = self._token_hash_keys.get(verification.code_hash_version)
+        if code_key is None or not verify_verification_code_hash(code, verification.code_hash, code_key):
+            verification.attempts += 1
+            if verification.attempts >= 5:
+                verification.status = "failed"
+            await self._session.flush()
+            raise MailboxVerificationFailedError(verification_id)
+
+        password = self._cipher.decrypt(verification.encrypted_password, verification.key_version)
+        account, _api_key = await self.create(
+            user_id=user_id,
+            name=verification.name,
+            email=verification.email,
+            provider=verification.provider,
+            password=password,
+        )
+        verification.mailbox_id = account.id
+        verification.status = "verified"
+        verification.verified_at = now
+        await self._session.flush()
+        return account
 
     async def assign_user(self, account_id: int, user_id: int) -> AccountORM:
         account = await self.get_by_id(account_id)
@@ -97,6 +257,15 @@ class AccountRepository:
         account = await self.get_by_id(account_id)
         if account.user_id != user_id:
             raise AccountNotFoundError(account_id)
+        return account
+
+    async def get_for_user_by_name(self, user_id: int, name: str) -> AccountORM:
+        result = await self._session.scalars(
+            select(AccountORM).where(AccountORM.user_id == user_id, AccountORM.name == name).limit(1)
+        )
+        account = result.first()
+        if account is None:
+            raise AccountNotFoundError(name)
         return account
 
     async def get_by_api_key(self, raw_key: str) -> AccountORM:
@@ -149,6 +318,40 @@ class AccountRepository:
         await self._session.flush()
         return account
 
+    async def update_oauth_tokens(
+        self,
+        account_id: int,
+        *,
+        refresh_token: str,
+        access_token: str,
+        expires_at: datetime | None,
+        scopes: tuple[str, ...],
+    ) -> AccountORM:
+        account = await self.get_by_id(account_id)
+        encrypted_refresh = self._cipher.encrypt(refresh_token)
+        encrypted_access = self._cipher.encrypt(access_token)
+        account.oauth_refresh_token = encrypted_refresh.ciphertext
+        account.oauth_access_token = encrypted_access.ciphertext
+        account.key_version = encrypted_access.key_version
+        account.oauth_token_expires_at = expires_at
+        account.oauth_scopes = list(scopes)
+        await self._session.flush()
+        return account
+
+    async def update_name_for_user(self, user_id: int, account_id: int, name: str) -> AccountORM:
+        validate_mailbox_name(name)
+        account = await self.get_for_user(user_id, account_id)
+        duplicate_name = await self._session.scalar(
+            select(AccountORM.id)
+            .where(AccountORM.user_id == user_id, AccountORM.name == name, AccountORM.id != account_id)
+            .limit(1)
+        )
+        if duplicate_name is not None:
+            raise DuplicateMailboxNameError(name)
+        account.name = name
+        await self._session.flush()
+        return account
+
     async def delete(self, account_id: int) -> None:
         account = await self.get_by_id(account_id)
         await self._session.delete(account)
@@ -158,6 +361,18 @@ class AccountRepository:
         account = await self.get_for_user(user_id, account_id)
         await self._session.delete(account)
         await self._session.flush()
+
+    async def _require_unique_account_fields(self, *, user_id: int | None, email: str, name: str) -> None:
+        duplicate_email = await self._session.scalar(
+            select(AccountORM.id).where(AccountORM.user_id == user_id, AccountORM.email == email).limit(1)
+        )
+        if duplicate_email is not None:
+            raise DuplicateEmailError(email)
+        duplicate_name = await self._session.scalar(
+            select(AccountORM.id).where(AccountORM.user_id == user_id, AccountORM.name == name).limit(1)
+        )
+        if duplicate_name is not None:
+            raise DuplicateMailboxNameError(name)
 
     def _active_token_hash_key(self) -> bytes:
         return self._token_hash_keys[self._active_token_hash_version]
@@ -207,7 +422,7 @@ class AuditRepository:
     async def append(self, event: dict[str, Any] | AuditEvent) -> AuditEventORM:
         event = _audit_record(event)
         row = AuditEventORM(
-            timestamp=event.get("timestamp") or datetime.now(timezone.utc),
+            timestamp=_parse_datetime(event.get("timestamp")) or datetime.now(timezone.utc),
             actor_type=event["actor_type"],
             actor_id=event.get("actor_id"),
             client_ip=event["client_ip"],
@@ -252,3 +467,13 @@ def _audit_record(event: dict[str, Any] | AuditEvent) -> dict[str, Any]:
     if isinstance(event, AuditEvent):
         return event.to_record()
     return sanitize_extra(event)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    raise TypeError(f"Unsupported datetime value: {value!r}")

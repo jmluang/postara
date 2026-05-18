@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from urllib.parse import quote
 
 from postara.api import create_app
 from postara.accounts import AccountService
@@ -48,7 +49,7 @@ class FakeMailboxRuntime:
         self.mark_seen_calls.append((account.id, password, folder, uid, seen))
 
 
-def client_with_account() -> tuple[TestClient, int, str, FakeMailboxRuntime]:
+def client_with_account() -> tuple[TestClient, int, str, str, str, FakeMailboxRuntime]:
     accounts = AccountService()
     users = UserService()
     user, session_token = users.register(email="user@example.com", password="secret123", name="User")
@@ -61,14 +62,14 @@ def client_with_account() -> tuple[TestClient, int, str, FakeMailboxRuntime]:
     )
     _key, api_key = users.create_api_key(user.id, name="Test")
     runtime = FakeMailboxRuntime()
-    return TestClient(create_app(accounts=accounts, users=users, mailbox_runtime=runtime)), account.id, session_token, api_key, runtime
+    return TestClient(create_app(accounts=accounts, users=users, mailbox_runtime=runtime)), account.id, account.name, session_token, api_key, runtime
 
 
 def test_list_messages_uses_mailbox_runtime():
-    client, account_id, _session_token, api_key, _runtime = client_with_account()
+    client, _account_id, mailbox_name, _session_token, api_key, _runtime = client_with_account()
 
     response = client.get(
-        f"/mailboxes/{account_id}/messages",
+        f"/mailboxes/{quote(mailbox_name, safe='')}/messages",
         headers={"X-Api-Key": api_key},
     )
 
@@ -77,10 +78,10 @@ def test_list_messages_uses_mailbox_runtime():
 
 
 def test_list_folders_uses_mailbox_runtime():
-    client, account_id, session_token, _api_key, _runtime = client_with_account()
+    client, _account_id, mailbox_name, session_token, _api_key, _runtime = client_with_account()
 
     response = client.get(
-        f"/mailboxes/{account_id}/folders",
+        f"/mailboxes/{quote(mailbox_name, safe='')}/folders",
         headers={"Authorization": f"Bearer {session_token}"},
     )
 
@@ -89,10 +90,10 @@ def test_list_folders_uses_mailbox_runtime():
 
 
 def test_fetch_message_returns_not_found_for_unknown_uid():
-    client, account_id, _session_token, api_key, _runtime = client_with_account()
+    client, _account_id, mailbox_name, _session_token, api_key, _runtime = client_with_account()
 
     response = client.get(
-        f"/mailboxes/{account_id}/messages/999",
+        f"/mailboxes/{quote(mailbox_name, safe='')}/messages/999",
         headers={"X-Api-Key": api_key},
     )
 
@@ -101,10 +102,10 @@ def test_fetch_message_returns_not_found_for_unknown_uid():
 
 
 def test_fetch_message_returns_provider_message():
-    client, account_id, session_token, _api_key, _runtime = client_with_account()
+    client, _account_id, mailbox_name, session_token, _api_key, _runtime = client_with_account()
 
     response = client.get(
-        f"/mailboxes/{account_id}/messages/123",
+        f"/mailboxes/{quote(mailbox_name, safe='')}/messages/123",
         headers={"Authorization": f"Bearer {session_token}"},
     )
 
@@ -113,10 +114,10 @@ def test_fetch_message_returns_provider_message():
 
 
 def test_list_messages_accepts_folder_query_parameter():
-    client, account_id, session_token, _api_key, runtime = client_with_account()
+    client, account_id, mailbox_name, session_token, _api_key, runtime = client_with_account()
 
     response = client.get(
-        f"/mailboxes/{account_id}/messages",
+        f"/mailboxes/{quote(mailbox_name, safe='')}/messages",
         headers={"Authorization": f"Bearer {session_token}"},
         params={"folder": "Receipts"},
     )
