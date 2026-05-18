@@ -10,9 +10,18 @@ require_secret() {
     exit 1
   fi
 
-  mode="$(stat -c '%a' "$path")"
-  if [ "$mode" != "400" ]; then
-    echo "Secret must have 0400 permissions: $path" >&2
+  if python - "$path" <<'PY'
+import os
+import stat
+import sys
+
+mode = stat.S_IMODE(os.stat(sys.argv[1]).st_mode)
+raise SystemExit(1 if mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH) else 0)
+PY
+  then
+    :
+  else
+    echo "Secret must not be writable: $path" >&2
     exit 1
   fi
 

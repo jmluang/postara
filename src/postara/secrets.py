@@ -16,8 +16,8 @@ def ensure_secret_file(path: str | Path) -> bytes:
         raise SecretFileError(f"Secret path is not a file: {secret_path}")
 
     mode = stat.S_IMODE(secret_path.stat().st_mode)
-    if mode != stat.S_IRUSR:
-        raise SecretFileError(f"Secret file must have 0400 permissions: {secret_path}")
+    if mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+        raise SecretFileError(f"Secret file must not be writable: {secret_path}")
 
     data = secret_path.read_bytes().strip()
     if not data:

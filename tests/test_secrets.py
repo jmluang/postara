@@ -7,7 +7,7 @@ from postara.database import load_runtime_secrets
 from postara.secrets import SecretFileError, ensure_secret_file
 
 
-def test_secret_file_must_be_0400(tmp_path):
+def test_secret_file_must_not_be_writable(tmp_path):
     secret_file = tmp_path / "token_hash.key"
     secret_file.write_text("secret", encoding="utf-8")
     secret_file.chmod(0o644)
@@ -15,16 +15,24 @@ def test_secret_file_must_be_0400(tmp_path):
     try:
         ensure_secret_file(secret_file)
     except SecretFileError as exc:
-        assert "0400" in str(exc)
+        assert "writable" in str(exc)
         return
 
-    raise AssertionError("secret files with broad permissions must be rejected")
+    raise AssertionError("writable secret files must be rejected")
 
 
 def test_secret_file_accepts_0400(tmp_path):
     secret_file = tmp_path / "token_hash.key"
     secret_file.write_text("secret", encoding="utf-8")
     secret_file.chmod(stat.S_IRUSR)
+
+    assert ensure_secret_file(secret_file) == b"secret"
+
+
+def test_secret_file_accepts_docker_read_only_mode(tmp_path):
+    secret_file = tmp_path / "token_hash.key"
+    secret_file.write_text("secret", encoding="utf-8")
+    secret_file.chmod(0o444)
 
     assert ensure_secret_file(secret_file) == b"secret"
 

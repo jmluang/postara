@@ -20,8 +20,8 @@ def test_dockerfile_packages_prebuilt_frontend_dist():
 def test_compose_image_can_be_overridden_for_pulled_package():
     compose = (ROOT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert 'image: "${POSTARA_IMAGE:-postara:0.1.0}"' in compose
-    assert "build:" in compose
+    assert 'image: "${POSTARA_IMAGE:-ghcr.io/jmluang/postara:latest}"' in compose
+    assert "build:" not in compose
 
 
 def test_github_actions_publish_container_package_to_ghcr():
