@@ -1,0 +1,43 @@
+services:
+  postara:
+    image: "${POSTARA_IMAGE:-postara:0.1.0}"
+    build:
+      context: .
+    env_file:
+      - .env
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      APP_SCHEMA: app
+      AUDIT_SCHEMA: audit
+      POSTARA_CONFIG: /etc/postara/postara.toml
+      POSTARA_SECRETS_DIR: /etc/postara/secrets
+      IMAP_WORKERS: "8"
+      DB_HOST: "${POSTARA_DB_HOST:-aws-1-ap-northeast-1.pooler.supabase.com}"
+      DB_PORT: "${POSTARA_DB_PORT:-6543}"
+      POSTGRES_DB: "${POSTARA_DB_NAME:-postgres}"
+      POSTGRES_USER: "${POSTARA_DB_USER:-postgres.lozxfhywnnnhatuwcloc}"
+    volumes:
+      - ./secrets:/etc/postara/secrets:ro
+      - ${POSTARA_CONFIG_FILE:-./config/postara.toml.example}:/etc/postara/postara.toml:ro
+    ports:
+      - "${POSTARA_HOST_BIND:-127.0.0.1}:${POSTARA_HOST_PORT:-18080}:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2); raise SystemExit(0 if r.status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"

@@ -33,7 +33,7 @@ require_secret "fernet.key"
 require_optional_secret "fernet.key.v2"
 require_secret "token_hash.key"
 require_optional_secret "token_hash.key.v2"
-require_secret "db_password.txt"
+require_optional_secret "db_password.txt"
 
 DB_HOST="${DB_HOST:-postgres}"
 DB_PORT="${DB_PORT:-5432}"
