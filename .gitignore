@@ -29,6 +29,8 @@ tmp/
 dist/
 !frontend/dist/
 !frontend/dist/**
+!frontend/dist-site/
+!frontend/dist-site/**
 build/
 
 # Local planning/spec docs stay out of git, but product docs below are tracked.

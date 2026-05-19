@@ -5,6 +5,11 @@ This guide is for AI agents and automation clients that read mail through Postar
 Postara exposes user-connected mailboxes over stable HTTP routes. Agents should use
 the mailbox API name returned by discovery, not the internal mailbox id.
 
+Messages are runtime provider data. Postara does not persist provider message bodies
+or message metadata in its application database. Treat `seen` as provider state:
+fetching detail does not mark a message read, and read/unread changes require the
+explicit mark-seen endpoint.
+
 ## Authentication
 
 Use an API key in every agent request:
@@ -212,12 +217,22 @@ Common error codes:
 | `401` | `auth_missing` | Ask for an API key. |
 | `401` | `auth_malformed` | Ask for the key to be checked. |
 | `401` | `auth_invalid` | Ask for a new or enabled API key. |
+| `401` | `invalid_credentials` | Browser/session login failed; do not expose whether the email exists. |
 | `403` | `scope_forbidden` | Do not retry. Explain that the key lacks the required scope. |
+| `403` | `auth_challenge_required` | Browser/session auth requires an additional challenge. |
+| `403` | `auth_challenge_failed` | Browser/session challenge failed. |
+| `429` | `rate_limited` | Back off before retrying. |
 | `404` | `account_not_found` | Re-run `GET /mailboxes`; the mailbox name may have changed or the key may be scoped elsewhere. |
 | `404` | `message_not_found` | Do not retry the same uid. Refresh the message list if needed. |
 | `409` | `mailbox_reconnect_required` | Ask the user to reconnect the mailbox in Postara. |
 | `400` | `unsupported_provider_feature` | Retry without unsupported filters when safe. |
 | `502` | `provider_error` | Retry later with backoff. |
+
+## Logging Guidance
+
+Agents may log safe operation metadata such as mailbox API name, message uid,
+status code, and request id. Do not log message bodies, subjects, senders,
+recipients, snippets, attachment names, or raw API keys.
 
 ## Safe Agent Defaults
 

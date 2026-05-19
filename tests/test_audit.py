@@ -7,6 +7,9 @@ def test_sanitize_extra_redacts_sensitive_prefixes_recursively():
         "TokenValue": "secret",
         "nested": {
             "html_body": "<p>secret</p>",
+            "subject": "Receipt",
+            "from_address": "sender@example.com",
+            "attachment_filename": "invoice.pdf",
             "message_uid": 42,
         },
     }
@@ -16,6 +19,9 @@ def test_sanitize_extra_redacts_sensitive_prefixes_recursively():
     assert sanitized["api_key"] == "[REDACTED]"
     assert sanitized["TokenValue"] == "[REDACTED]"
     assert sanitized["nested"]["html_body"] == "[REDACTED]"
+    assert sanitized["nested"]["subject"] == "[REDACTED]"
+    assert sanitized["nested"]["from_address"] == "[REDACTED]"
+    assert sanitized["nested"]["attachment_filename"] == "[REDACTED]"
     assert sanitized["nested"]["message_uid"] == 42
 
 

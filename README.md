@@ -101,3 +101,29 @@ Fetch one message:
 curl -H "X-Api-Key: $POSTARA_API_KEY" \
   http://127.0.0.1:18080/mailboxes/gmail-primary/messages/{uid}
 ```
+
+## Auth Protection
+
+Password login and registration use layered abuse protection:
+
+- durable aggregated failure buckets in the app database for hosted deployments
+- normalized email buckets and client-IP buckets
+- trusted proxy CIDR handling for `CF-Connecting-IP` and `X-Forwarded-For`
+- optional Cloudflare Turnstile challenges in hosted mode
+- emergency bypass via `AUTH_EMERGENCY_BYPASS=true`
+
+Stable auth/security error codes include:
+
+- `invalid_credentials`
+- `rate_limited`
+- `auth_challenge_required`
+- `auth_challenge_failed`
+- `registration_unavailable`
+
+Forwarded IP headers are trusted only when the immediate peer is inside `trusted_proxy_cidrs` / `TRUSTED_PROXY_CIDRS`.
+
+## Runtime Message Model
+
+Messages are provider-backed runtime data. Postara does not persist provider message bodies, subjects, senders, recipients, snippets, attachment names, or message metadata in the app database.
+
+Message list/detail endpoints pull from the connected provider on request. The provider remains the source of truth for `seen`; opening message detail does not mark a message read. Use the explicit mark-seen endpoint to change read state.

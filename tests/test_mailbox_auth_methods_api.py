@@ -258,6 +258,42 @@ def test_oauth_callback_creates_mailbox_with_provider_email_and_redirects():
     assert mailboxes.json()["mailboxes"][0]["auth_type"] == "oauth2"
 
 
+def test_oauth_callback_reconnects_existing_oauth_mailbox_without_duplicate():
+    oauth_client = FakeOAuthClient()
+    client = workspace_client(oauth_clients={"gmail": oauth_client})
+    token = register(client, email="typed@example.com")
+    first_start = client.post(
+        "/mailboxes/oauth/gmail/start",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Gmail"},
+    )
+    first_state = oauth_client.authorization_calls[-1]["state"]
+    first = client.get(
+        "/mailboxes/oauth/gmail/callback",
+        params={"code": "first-code", "state": first_state},
+        follow_redirects=False,
+    )
+    second_start = client.post(
+        "/mailboxes/oauth/gmail/start",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Gmail"},
+    )
+    second_state = oauth_client.authorization_calls[-1]["state"]
+    second = client.get(
+        "/mailboxes/oauth/gmail/callback",
+        params={"code": "second-code", "state": second_state},
+        follow_redirects=False,
+    )
+    mailboxes = client.get("/mailboxes", headers={"Authorization": f"Bearer {token}"})
+
+    assert first.status_code == 307
+    assert second_start.status_code == 200
+    assert second.status_code == 307
+    assert second.headers["location"] == "/app?mailbox_oauth=success&mailbox_id=1"
+    assert len(mailboxes.json()["mailboxes"]) == 1
+    assert oauth_client.exchange_calls[-1]["code"] == "second-code"
+
+
 @pytest.mark.anyio
 async def test_lazy_account_service_forwards_oauth_creation(monkeypatch):
     class FakeRepositoryAccountService:

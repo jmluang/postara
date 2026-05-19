@@ -111,11 +111,37 @@ class AccountRepository:
     ) -> AccountORM:
         canonical_email = oauth_email or email
         validate_mailbox_name(name)
+        encrypted_refresh = self._cipher.encrypt(refresh_token)
+        encrypted_access = self._cipher.encrypt(access_token) if access_token is not None else None
+        existing = (
+            await self._session.scalars(
+                select(AccountORM)
+                .where(AccountORM.user_id == user_id)
+                .where(AccountORM.name == name)
+                .limit(1)
+            )
+        ).first()
+        if existing is not None:
+            if existing.auth_type != "oauth2" or existing.provider != provider:
+                raise DuplicateMailboxNameError(name)
+            existing.email = canonical_email
+            existing.encrypted_password = None
+            existing.key_version = encrypted_refresh.key_version
+            existing.oauth_refresh_token = encrypted_refresh.ciphertext
+            existing.oauth_access_token = encrypted_access.ciphertext if encrypted_access else None
+            existing.oauth_token_expires_at = expires_at
+            existing.oauth_scopes = list(scopes)
+            existing.oauth_subject = subject
+            existing.oauth_email = canonical_email
+            try:
+                await self._session.flush()
+            except IntegrityError as exc:
+                raise DuplicateEmailError(canonical_email) from exc
+            return existing
+
         await self._require_unique_account_fields(user_id=user_id, email=canonical_email, name=name)
         api_key = generate_api_key("live")
         parts = parse_api_key(api_key)
-        encrypted_refresh = self._cipher.encrypt(refresh_token)
-        encrypted_access = self._cipher.encrypt(access_token) if access_token is not None else None
         account = AccountORM(
             user_id=user_id,
             name=name,

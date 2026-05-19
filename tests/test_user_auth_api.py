@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from postara.accounts import AccountService
 from postara.api import create_app
+from postara.config import Settings
 from postara.users import UserService
 
 
@@ -40,8 +41,8 @@ def test_duplicate_user_email_is_rejected():
     assert client.post("/auth/register", json=payload).status_code == 201
     response = client.post("/auth/register", json=payload)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "user_email_already_exists"
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "registration_unavailable"
 
 
 def test_register_validation_error_names_invalid_field():
@@ -74,6 +75,29 @@ def test_login_rate_limits_repeated_password_failures():
     assert responses[5].json()["error"]["code"] == "rate_limited"
 
 
+def test_login_rate_limit_uses_normalized_email_bucket():
+    client = TestClient(create_app(accounts=AccountService(), users=UserService()))
+    client.post(
+        "/auth/register",
+        json={"email": "user@example.com", "password": "secret123", "name": "User"},
+    )
+
+    responses = [
+        client.post("/auth/login", json={"email": email, "password": "bad"})
+        for email in [
+            "USER@example.com",
+            "user@example.com",
+            "User@Example.com",
+            "uSeR@example.COM",
+            "user@example.com",
+            "USER@example.COM",
+        ]
+    ]
+
+    assert responses[5].status_code == 429
+    assert responses[5].json()["error"]["code"] == "rate_limited"
+
+
 def test_register_rate_limits_repeated_duplicate_email_attempts():
     client = TestClient(create_app(accounts=AccountService(), users=UserService()))
     payload = {"email": "user@example.com", "password": "secret123", "name": "User"}
@@ -81,9 +105,32 @@ def test_register_rate_limits_repeated_duplicate_email_attempts():
 
     responses = [client.post("/auth/register", json=payload) for _ in range(6)]
 
-    assert [response.status_code for response in responses[:5]] == [409, 409, 409, 409, 409]
+    assert [response.status_code for response in responses[:5]] == [400, 400, 400, 400, 400]
     assert responses[5].status_code == 429
     assert responses[5].json()["error"]["code"] == "rate_limited"
+
+
+def test_hosted_auth_can_require_challenge_before_lockout():
+    client = TestClient(
+        create_app(
+            accounts=AccountService(),
+            users=UserService(),
+            settings=Settings(deployment_mode="hosted", turnstile_secret_key="secret"),
+        )
+    )
+    client.post(
+        "/auth/register",
+        json={"email": "user@example.com", "password": "secret123", "name": "User"},
+    )
+
+    for _ in range(3):
+        response = client.post("/auth/login", json={"email": "user@example.com", "password": "bad"})
+        assert response.status_code == 401
+
+    challenged = client.post("/auth/login", json={"email": "user@example.com", "password": "bad"})
+
+    assert challenged.status_code == 403
+    assert challenged.json()["error"]["code"] == "auth_challenge_required"
 
 
 def test_user_can_change_own_password():
@@ -105,6 +152,37 @@ def test_user_can_change_own_password():
     assert changed.status_code == 204
     assert old_login.status_code == 401
     assert new_login.status_code == 200
+
+
+def test_password_change_revokes_other_sessions_but_keeps_api_keys():
+    client = TestClient(create_app(accounts=AccountService(), users=UserService()))
+    registered = client.post(
+        "/auth/register",
+        json={"email": "user@example.com", "password": "secret123", "name": "User"},
+    )
+    first_token = registered.json()["session_token"]
+    second_login = client.post("/auth/login", json={"email": "user@example.com", "password": "secret123"})
+    second_token = second_login.json()["session_token"]
+    api_key = client.post(
+        "/api-keys",
+        headers={"Authorization": f"Bearer {first_token}"},
+        json={"name": "Agent"},
+    ).json()["api_key"]
+
+    changed = client.put(
+        "/me/password",
+        headers={"Authorization": f"Bearer {first_token}"},
+        json={"current_password": "secret123", "new_password": "better123"},
+    )
+
+    current_session = client.get("/me", headers={"Authorization": f"Bearer {first_token}"})
+    other_session = client.get("/me", headers={"Authorization": f"Bearer {second_token}"})
+    api_key_mailboxes = client.get("/mailboxes", headers={"X-Api-Key": api_key})
+
+    assert changed.status_code == 204
+    assert current_session.status_code == 200
+    assert other_session.status_code == 401
+    assert api_key_mailboxes.status_code == 200
 
 
 def test_user_can_update_own_name():

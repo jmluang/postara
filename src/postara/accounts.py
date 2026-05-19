@@ -301,9 +301,27 @@ class AccountService:
         canonical_email = oauth_email or email
         validate_mailbox_name(name)
         if any(account.email == canonical_email and account.user_id == user_id for account in self._accounts.values()):
-            raise DuplicateEmailError(canonical_email)
-        if any(account.name == name and account.user_id == user_id for account in self._accounts.values()):
-            raise DuplicateMailboxNameError(name)
+            existing_email = next(
+                account for account in self._accounts.values() if account.email == canonical_email and account.user_id == user_id
+            )
+            if existing_email.name != name:
+                raise DuplicateEmailError(canonical_email)
+        existing = next((account for account in self._accounts.values() if account.name == name and account.user_id == user_id), None)
+        if existing is not None:
+            if existing.auth_type != "oauth2" or existing.provider != provider:
+                raise DuplicateMailboxNameError(name)
+            encrypted_refresh = self._cipher.encrypt(refresh_token)
+            encrypted_access = self._cipher.encrypt(access_token) if access_token is not None else None
+            existing.email = canonical_email
+            existing.encrypted_password = None
+            existing.key_version = encrypted_refresh.key_version
+            existing.oauth_refresh_token = encrypted_refresh.ciphertext
+            existing.oauth_access_token = encrypted_access.ciphertext if encrypted_access else None
+            existing.oauth_token_expires_at = expires_at
+            existing.oauth_scopes = list(scopes)
+            existing.oauth_subject = subject
+            existing.oauth_email = canonical_email
+            return existing
         if provider != "gmail":
             raise ValueError("Only gmail OAuth is supported in this implementation phase.")
 

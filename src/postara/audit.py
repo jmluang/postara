@@ -15,6 +15,14 @@ SENSITIVE_PREFIXES = (
     "body",
     "content",
     "html",
+    "subject",
+    "from",
+    "to",
+    "recipient",
+    "sender",
+    "snippet",
+    "attachment",
+    "filename",
 )
 
 
