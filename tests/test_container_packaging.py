@@ -12,7 +12,9 @@ def test_dockerfile_packages_prebuilt_frontend_dist():
     assert "npm ci" not in dockerfile
     assert "npm run build" not in dockerfile
     assert "COPY --chown=postara:postara frontend/dist ./frontend/dist" in dockerfile
+    assert "COPY --chown=postara:postara frontend/dist-site ./frontend/dist-site" in dockerfile
     assert "frontend/dist" in dockerfile
+    assert "frontend/dist-site" in dockerfile
     assert 'PYTHONPATH="/app/src"' in dockerfile
     assert "favicon.svg icon-app.svg" in dockerfile
 

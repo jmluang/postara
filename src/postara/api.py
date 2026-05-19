@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -34,6 +35,16 @@ from postara.accounts import (
     MailboxVerificationExpiredError,
     MailboxVerificationFailedError,
     MailboxVerificationNotFoundError,
+)
+from postara.auth_protection import (
+    AuthAttemptLimiter,
+    AuthChallengeFailed,
+    AuthChallengeRequired,
+    AuthProtectionConfig,
+    AuthRateLimited,
+    InMemoryAuthAttemptStore,
+    SqlAuthAttemptStore,
+    resolve_client_ip,
 )
 from postara.config import Settings
 from postara.database import (
@@ -178,11 +189,13 @@ class UserRegisterRequest(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=8)
     name: str = Field(min_length=1)
+    turnstile_token: str | None = None
 
 
 class UserLoginRequest(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=1)
+    turnstile_token: str | None = None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -341,11 +354,19 @@ class _LazyUserService:
     async def revoke_session(self, raw_token: str):
         return await self._get().revoke_session(raw_token)
 
-    async def change_password(self, user_id: int, *, current_password: str, new_password: str):
+    async def change_password(
+        self,
+        user_id: int,
+        *,
+        current_password: str,
+        new_password: str,
+        current_session_token: str | None = None,
+    ):
         return await self._get().change_password(
             user_id,
             current_password=current_password,
             new_password=new_password,
+            current_session_token=current_session_token,
         )
 
     async def update_profile(self, user_id: int, *, name: str):
@@ -417,14 +438,14 @@ def _audit_context(request: Request, *, actor_type: str, actor_id: str | None = 
     return {
         "actor_type": actor_type,
         "actor_id": actor_id,
-        "client_ip": request.client.host if request.client else "0.0.0.0",
+        "client_ip": getattr(request.state, "client_ip", None) or (request.client.host if request.client else "0.0.0.0"),
         "user_agent": request.headers.get("user-agent", "unknown"),
         "request_id": request.state.request_id,
     }
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "0.0.0.0"
+    return getattr(request.state, "client_ip", None) or (request.client.host if request.client else "0.0.0.0")
 
 
 def _next_cursor(messages: list, limit: int) -> str | None:
@@ -477,6 +498,18 @@ def create_app(
     app_session_factory = create_app_session_factory(settings)
     audit_session_factory = create_audit_session_factory(settings)
     rate_limiter = InMemoryRateLimiter()
+    auth_attempt_store = InMemoryAuthAttemptStore() if users is not None else SqlAuthAttemptStore(app_session_factory)
+    auth_limiter = AuthAttemptLimiter(
+        auth_attempt_store,
+        AuthProtectionConfig(
+            enabled=settings.auth_protection_enabled and not settings.auth_emergency_bypass,
+            challenge_enabled=settings.deployment_mode == "hosted" and bool(settings.turnstile_secret_key),
+            failure_limit=settings.auth_failure_limit,
+            challenge_threshold=settings.auth_challenge_threshold,
+            window_seconds=settings.auth_window_seconds,
+            lock_seconds=settings.auth_lock_seconds,
+        ),
+    )
     frontend_dist = frontend_dist or default_frontend_dist()
     frontend_site_dist = frontend_site_dist or default_frontend_site_dist()
     frontend_assets = frontend_dist / "assets"
@@ -573,6 +606,55 @@ def create_app(
             )
         return None
 
+    async def verify_turnstile(token: str | None, request: Request) -> bool:
+        if not settings.turnstile_secret_key:
+            return False
+        if not token:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                    data={
+                        "secret": settings.turnstile_secret_key,
+                        "response": token,
+                        "remoteip": _client_ip(request),
+                    },
+                )
+            data = response.json()
+            return bool(data.get("success"))
+        except Exception:
+            LOGGER.warning("Turnstile verification failed request_id=%s", request.state.request_id)
+            return False
+
+    async def check_auth_attempt(action: str, email: str, client_ip: str, turnstile_token: str | None, request: Request) -> None:
+        try:
+            await auth_limiter.check(
+                action=action,
+                email=email,
+                client_ip=client_ip,
+                challenge_token=turnstile_token,
+            )
+        except AuthChallengeRequired:
+            LOGGER.info("auth_challenge_required action=%s request_id=%s", action, request.state.request_id)
+            raise
+        except AuthChallengeFailed:
+            if await verify_turnstile(turnstile_token, request):
+                return
+            LOGGER.info("auth_challenge_failed action=%s request_id=%s", action, request.state.request_id)
+            raise
+
+    async def record_auth_failure(action: str, email: str, client_ip: str, request: Request) -> JSONResponse | None:
+        try:
+            await auth_limiter.record_failure(action=action, email=email, client_ip=client_ip)
+        except AuthRateLimited:
+            LOGGER.info("auth_rate_limited action=%s request_id=%s", action, request.state.request_id)
+            return rate_limit_response(request.state.request_id)
+        return None
+
+    async def clear_auth_failures(action: str, email: str, client_ip: str) -> None:
+        await auth_limiter.clear(action=action, email=email, client_ip=client_ip)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         task = asyncio.create_task(audit_outbox_loop())
@@ -610,6 +692,12 @@ def create_app(
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
         request.state.request_id = request.headers.get("X-Request-Id") or _request_id()
+        peer_ip = request.client.host if request.client else "0.0.0.0"
+        request.state.client_ip = resolve_client_ip(
+            peer_ip=peer_ip,
+            headers={key.lower(): value for key, value in request.headers.items()},
+            trusted_proxy_cidrs=settings.trusted_proxy_cidrs,
+        )
         response = await call_next(request)
         response.headers["X-Request-Id"] = request.state.request_id
         return response
@@ -653,7 +741,7 @@ def create_app(
     async def register_user(payload: UserRegisterRequest, request: Request):
         client_ip = _client_ip(request)
         try:
-            rate_limiter.check_auth_failures(client_ip)
+            await check_auth_attempt("register", str(payload.email), client_ip, payload.turnstile_token, request)
             user, session_token = await _resolve(
                 user_service.register(
                     email=str(payload.email),
@@ -661,19 +749,32 @@ def create_app(
                     name=payload.name,
                 )
             )
+            await clear_auth_failures("register", str(payload.email), client_ip)
         except DuplicateUserEmailError:
-            try:
-                rate_limiter.record_auth_failure(client_ip)
-            except RateLimitExceeded:
-                return rate_limit_response(request.state.request_id)
+            response = await record_auth_failure("register", str(payload.email), client_ip, request)
+            if response is not None:
+                return response
             return error_response(
                 request_id=request.state.request_id,
-                status_code=409,
-                code="user_email_already_exists",
-                message="User email already exists.",
-                details={"field": "email"},
+                status_code=400,
+                code="registration_unavailable",
+                message="Registration is unavailable for this request.",
             )
-        except RateLimitExceeded:
+        except AuthChallengeRequired:
+            return error_response(
+                request_id=request.state.request_id,
+                status_code=403,
+                code="auth_challenge_required",
+                message="Additional verification is required.",
+            )
+        except AuthChallengeFailed:
+            return error_response(
+                request_id=request.state.request_id,
+                status_code=403,
+                code="auth_challenge_failed",
+                message="Additional verification failed.",
+            )
+        except AuthRateLimited:
             return rate_limit_response(request.state.request_id)
         return {"user": user.to_dto(), "session_token": session_token}
 
@@ -681,22 +782,36 @@ def create_app(
     async def login_user(payload: UserLoginRequest, request: Request):
         client_ip = _client_ip(request)
         try:
-            rate_limiter.check_auth_failures(client_ip)
+            await check_auth_attempt("login", str(payload.email), client_ip, payload.turnstile_token, request)
             user, session_token = await _resolve(
                 user_service.login(email=str(payload.email), password=payload.password)
             )
+            await clear_auth_failures("login", str(payload.email), client_ip)
         except InvalidUserCredentialsError:
-            try:
-                rate_limiter.record_auth_failure(client_ip)
-            except RateLimitExceeded:
-                return rate_limit_response(request.state.request_id)
+            response = await record_auth_failure("login", str(payload.email), client_ip, request)
+            if response is not None:
+                return response
             return error_response(
                 request_id=request.state.request_id,
                 status_code=401,
-                code="auth_invalid",
+                code="invalid_credentials",
                 message="Authentication failed.",
             )
-        except RateLimitExceeded:
+        except AuthChallengeRequired:
+            return error_response(
+                request_id=request.state.request_id,
+                status_code=403,
+                code="auth_challenge_required",
+                message="Additional verification is required.",
+            )
+        except AuthChallengeFailed:
+            return error_response(
+                request_id=request.state.request_id,
+                status_code=403,
+                code="auth_challenge_failed",
+                message="Additional verification failed.",
+            )
+        except AuthRateLimited:
             return rate_limit_response(request.state.request_id)
         return {"user": user.to_dto(), "session_token": session_token}
 
@@ -719,13 +834,20 @@ def create_app(
         return {"user": updated.to_dto()}
 
     @app.put("/me/password", status_code=204)
-    async def change_own_password(payload: PasswordChangeRequest, request: Request, user=Depends(require_user_session)):
+    async def change_own_password(
+        payload: PasswordChangeRequest,
+        request: Request,
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+        user=Depends(require_user_session),
+    ):
+        current_session_token = authorization.removeprefix("Bearer ").strip() if authorization else None
         try:
             await _resolve(
                 user_service.change_password(
                     user.id,
                     current_password=payload.current_password,
                     new_password=payload.new_password,
+                    current_session_token=current_session_token,
                 )
             )
         except InvalidUserCredentialsError:
@@ -1140,7 +1262,8 @@ def create_app(
                 details={"provider": provider},
             )
         existing = await _resolve(account_service.list_for_user(user.id))
-        if any(account.name == payload.name for account in existing):
+        name_match = next((account for account in existing if account.name == payload.name), None)
+        if name_match is not None and (name_match.auth_type != "oauth2" or name_match.provider != provider):
             return error_response(
                 request_id=request.state.request_id,
                 status_code=409,
@@ -1602,7 +1725,11 @@ def create_app(
                 account.id,
                 uid,
                 payload.seen,
-                audit_context=_audit_context(request, actor_type="user", actor_id=str(account.user_id)),
+                audit_context=_audit_context(
+                    request,
+                    actor_type="user" if authorization and authorization.startswith("Bearer ") else "api_key",
+                    actor_id=str(account.user_id),
+                ),
             )
         except AccountNotFoundError:
             return error_response(

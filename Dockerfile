@@ -38,6 +38,7 @@ COPY --from=python-builder /opt/venv /opt/venv
 COPY --chown=postara:postara pyproject.toml README.md ./
 COPY --chown=postara:postara src ./src
 COPY --chown=postara:postara frontend/dist ./frontend/dist
+COPY --chown=postara:postara frontend/dist-site ./frontend/dist-site
 COPY --chown=postara:postara favicon.svg icon-app.svg ./
 COPY --chown=postara:postara alembic.ini ./alembic.ini
 COPY --chown=postara:postara migrations ./migrations

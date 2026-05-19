@@ -43,6 +43,25 @@ class UserORM(Base):
         }
 
 
+class AuthAttemptBucketORM(Base):
+    __tablename__ = "auth_attempt_buckets"
+    __table_args__ = (
+        UniqueConstraint("bucket_type", "bucket_key", name="uq_app_auth_attempt_buckets_type_key"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    bucket_type: Mapped[str] = mapped_column(Text, index=True)
+    bucket_key: Mapped[str] = mapped_column(Text, index=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    challenge_required_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class UserSessionORM(Base):
     __tablename__ = "user_sessions"
     __table_args__ = {"schema": "app"}

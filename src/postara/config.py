@@ -47,6 +47,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("POSTARA_SECRETS_DIR", "SECRETS_DIR"),
     )
     cors_allowed_origins: list[str] = []
+    auth_protection_enabled: bool = Field(default=True, validation_alias="AUTH_PROTECTION_ENABLED")
+    auth_emergency_bypass: bool = Field(default=False, validation_alias="AUTH_EMERGENCY_BYPASS")
+    auth_failure_limit: int = Field(default=5, validation_alias="AUTH_FAILURE_LIMIT")
+    auth_challenge_threshold: int = Field(default=3, validation_alias="AUTH_CHALLENGE_THRESHOLD")
+    auth_window_seconds: int = Field(default=300, validation_alias="AUTH_WINDOW_SECONDS")
+    auth_lock_seconds: int = Field(default=300, validation_alias="AUTH_LOCK_SECONDS")
+    turnstile_secret_key: str | None = Field(default=None, validation_alias="TURNSTILE_SECRET_KEY")
+    trusted_proxy_cidrs: list[str] = []
 
     def __init__(self, **data):
         config_defaults = _load_config_defaults(os.environ.get("POSTARA_CONFIG"))
@@ -106,6 +114,7 @@ def _load_config_defaults(config_path: str | None) -> dict:
     database = data.get("database", {})
     secrets = data.get("secrets", {})
     imap = data.get("imap", {})
+    security = data.get("security", {})
     defaults = {
         "database_url": database.get("app_url"),
         "app_database_url": database.get("app_url"),
@@ -123,5 +132,13 @@ def _load_config_defaults(config_path: str | None) -> dict:
         "secrets_dir": secrets.get("directory"),
         "imap_workers": imap.get("workers"),
         "imap_timeout_seconds": imap.get("read_timeout_seconds") or imap.get("connect_timeout_seconds"),
+        "auth_protection_enabled": security.get("auth_protection_enabled"),
+        "auth_emergency_bypass": security.get("auth_emergency_bypass"),
+        "auth_failure_limit": security.get("auth_failure_limit"),
+        "auth_challenge_threshold": security.get("auth_challenge_threshold"),
+        "auth_window_seconds": security.get("auth_window_seconds"),
+        "auth_lock_seconds": security.get("auth_lock_seconds"),
+        "turnstile_secret_key": security.get("turnstile_secret_key"),
+        "trusted_proxy_cidrs": security.get("trusted_proxy_cidrs"),
     }
     return {key: value for key, value in defaults.items() if value is not None}

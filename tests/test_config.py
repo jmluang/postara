@@ -53,6 +53,11 @@ directory = "/tmp/postara-secrets"
 [imap]
 workers = 3
 read_timeout_seconds = 12
+
+[security]
+auth_failure_limit = 8
+auth_challenge_threshold = 4
+trusted_proxy_cidrs = ["10.0.0.0/8"]
 """,
         encoding="utf-8",
     )
@@ -67,6 +72,9 @@ read_timeout_seconds = 12
     assert settings.secrets_dir == "/tmp/postara-secrets"
     assert settings.imap_workers == 3
     assert settings.imap_timeout_seconds == 12
+    assert settings.auth_failure_limit == 8
+    assert settings.auth_challenge_threshold == 4
+    assert settings.trusted_proxy_cidrs == ["10.0.0.0/8"]
 
 
 def test_settings_normalizes_plain_postgres_urls_to_asyncpg():

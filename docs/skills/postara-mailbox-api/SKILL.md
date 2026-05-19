@@ -10,6 +10,10 @@ description: >
 
 Use Postara as a mailbox read gateway. The caller must provide a Postara base URL and an API key.
 
+Messages are pulled from the connected provider at request time. Do not assume
+Postara has a durable message cache. The provider is the source of truth for
+`seen`; fetching message detail is side-effect free.
+
 Required inputs:
 
 - `POSTARA_BASE_URL`, for example `http://127.0.0.1:18080`
@@ -151,6 +155,11 @@ Message detail returns body fields:
 
 - Public mailbox routes use mailbox `name`, not internal `mailbox_id`.
 - Mailbox names contain only letters, numbers, and hyphens: `^[A-Za-z0-9-]+$`.
+- Message bodies and message metadata are runtime provider data, not durable
+  Postara database records.
+- Message ids may be logged for operation tracing; subjects, senders,
+  recipients, snippets, attachment names, HTML, text, and raw API keys must not
+  be logged.
 - There is no public send, reply, forward, delete, archive, label, or attachment
   download API yet.
 - Do not log raw API keys or full message bodies unless explicitly requested.

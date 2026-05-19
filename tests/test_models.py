@@ -1,6 +1,15 @@
 from datetime import datetime, timezone
 
-from postara.models import AccountORM, ApiKeyORM, AuditEventORM, AuditOutboxORM, PendingMailboxVerificationORM, UserORM, UserSessionORM
+from postara.models import (
+    AccountORM,
+    ApiKeyORM,
+    AuditEventORM,
+    AuditOutboxORM,
+    AuthAttemptBucketORM,
+    PendingMailboxVerificationORM,
+    UserORM,
+    UserSessionORM,
+)
 
 
 def test_models_use_separate_app_and_audit_schemas():
@@ -8,9 +17,18 @@ def test_models_use_separate_app_and_audit_schemas():
     assert AuditOutboxORM.__table__.schema == "app"
     assert AuditEventORM.__table__.schema == "audit"
     assert UserORM.__table__.schema == "app"
+    assert AuthAttemptBucketORM.__table__.schema == "app"
     assert UserSessionORM.__table__.schema == "app"
     assert ApiKeyORM.__table__.schema == "app"
     assert PendingMailboxVerificationORM.__table__.schema == "app"
+
+
+def test_schema_has_no_durable_message_tables():
+    table_names = {table.name for table in AccountORM.metadata.sorted_tables}
+
+    assert "messages" not in table_names
+    assert "message_bodies" not in table_names
+    assert "message_metadata" not in table_names
 
 
 def test_account_dto_excludes_sensitive_fields():

@@ -21,6 +21,8 @@ from postara.security import (
     verify_session_token_hash,
 )
 
+_DUMMY_PASSWORD_HASH = hash_password("postara-dummy-password")
+
 
 class DuplicateUserEmailError(ValueError):
     pass
@@ -110,12 +112,13 @@ class UserService:
         self._api_keys: dict[int, ApiKeyRecord] = {}
 
     def register(self, *, email: str, password: str, name: str) -> tuple[UserRecord, str]:
-        if any(user.email == email for user in self._users.values()):
-            raise DuplicateUserEmailError(email)
+        normalized_email = _normalize_user_email(email)
+        if any(user.email == normalized_email for user in self._users.values()):
+            raise DuplicateUserEmailError(normalized_email)
         now = datetime.now(timezone.utc)
         user = UserRecord(
             id=self._next_user_id,
-            email=email,
+            email=normalized_email,
             name=name,
             password_hash=hash_password(password),
             role="owner" if not self._users else "member",
@@ -126,9 +129,13 @@ class UserService:
         return user, self.create_session(user.id)
 
     def login(self, *, email: str, password: str) -> tuple[UserRecord, str]:
-        user = next((item for item in self._users.values() if item.email == email), None)
-        if user is None or user.disabled_at is not None or not verify_password(password, user.password_hash):
-            raise InvalidUserCredentialsError(email)
+        normalized_email = _normalize_user_email(email)
+        user = next((item for item in self._users.values() if item.email == normalized_email), None)
+        if user is None:
+            verify_password(password, _DUMMY_PASSWORD_HASH)
+            raise InvalidUserCredentialsError(normalized_email)
+        if user.disabled_at is not None or not verify_password(password, user.password_hash):
+            raise InvalidUserCredentialsError(normalized_email)
         user.last_login_at = datetime.now(timezone.utc)
         return user, self.create_session(user.id)
 
@@ -165,11 +172,19 @@ class UserService:
         if session is not None:
             session.revoked_at = datetime.now(timezone.utc)
 
-    def change_password(self, user_id: int, *, current_password: str, new_password: str) -> None:
+    def change_password(
+        self,
+        user_id: int,
+        *,
+        current_password: str,
+        new_password: str,
+        current_session_token: str | None = None,
+    ) -> None:
         user = self._users.get(user_id)
         if user is None or not verify_password(current_password, user.password_hash):
             raise InvalidUserCredentialsError(user_id)
         user.password_hash = hash_password(new_password)
+        self._revoke_other_sessions(user_id, current_session_token=current_session_token)
 
     def update_profile(self, user_id: int, *, name: str) -> UserRecord:
         user = self._users.get(user_id)
@@ -198,6 +213,19 @@ class UserService:
         if user is None:
             raise SessionNotFoundError(user_id)
         user.password_hash = hash_password(new_password)
+        self._revoke_other_sessions(user_id, current_session_token=None)
+
+    def _revoke_other_sessions(self, user_id: int, *, current_session_token: str | None) -> None:
+        current_prefix = None
+        if current_session_token:
+            try:
+                current_prefix, _secret = parse_session_token(current_session_token)
+            except Exception:
+                current_prefix = None
+        now = datetime.now(timezone.utc)
+        for prefix, session in self._sessions.items():
+            if session.user_id == user_id and prefix != current_prefix and session.revoked_at is None:
+                session.revoked_at = now
 
     def create_api_key(
         self,
@@ -272,11 +300,12 @@ class RepositoryUserService:
         self._active_token_hash_version = active_token_hash_version
 
     async def register(self, *, email: str, password: str, name: str):
+        normalized_email = _normalize_user_email(email)
         async with self._session_factory() as session:
             async with session.begin():
                 count = await session.scalar(select(func.count(UserORM.id)))
                 user = UserORM(
-                    email=email,
+                    email=normalized_email,
                     name=name,
                     password_hash=hash_password(password),
                     role="owner" if count == 0 else "member",
@@ -285,16 +314,20 @@ class RepositoryUserService:
                 try:
                     await session.flush()
                 except IntegrityError as exc:
-                    raise DuplicateUserEmailError(email) from exc
+                    raise DuplicateUserEmailError(normalized_email) from exc
                 token = await self._create_session(session, user.id)
                 return user, token
 
     async def login(self, *, email: str, password: str):
+        normalized_email = _normalize_user_email(email)
         async with self._session_factory() as session:
             async with session.begin():
-                user = (await session.scalars(select(UserORM).where(UserORM.email == email).limit(1))).first()
-                if user is None or user.disabled_at is not None or not verify_password(password, user.password_hash):
-                    raise InvalidUserCredentialsError(email)
+                user = (await session.scalars(select(UserORM).where(UserORM.email == normalized_email).limit(1))).first()
+                if user is None:
+                    verify_password(password, _DUMMY_PASSWORD_HASH)
+                    raise InvalidUserCredentialsError(normalized_email)
+                if user.disabled_at is not None or not verify_password(password, user.password_hash):
+                    raise InvalidUserCredentialsError(normalized_email)
                 user.last_login_at = datetime.now(timezone.utc)
                 token = await self._create_session(session, user.id)
                 return user, token
@@ -348,13 +381,25 @@ class RepositoryUserService:
                 if row is not None:
                     row.revoked_at = datetime.now(timezone.utc)
 
-    async def change_password(self, user_id: int, *, current_password: str, new_password: str) -> None:
+    async def change_password(
+        self,
+        user_id: int,
+        *,
+        current_password: str,
+        new_password: str,
+        current_session_token: str | None = None,
+    ) -> None:
         async with self._session_factory() as session:
             async with session.begin():
                 user = await session.get(UserORM, user_id)
                 if user is None or not verify_password(current_password, user.password_hash):
                     raise InvalidUserCredentialsError(user_id)
                 user.password_hash = hash_password(new_password)
+                await self._revoke_other_sessions(
+                    session,
+                    user_id,
+                    current_session_token=current_session_token,
+                )
 
     async def update_profile(self, user_id: int, *, name: str):
         async with self._session_factory() as session:
@@ -391,6 +436,24 @@ class RepositoryUserService:
                 if user is None:
                     raise SessionNotFoundError(user_id)
                 user.password_hash = hash_password(new_password)
+                await self._revoke_other_sessions(session, user_id, current_session_token=None)
+
+    async def _revoke_other_sessions(self, session, user_id: int, *, current_session_token: str | None) -> None:
+        current_prefix = None
+        if current_session_token:
+            try:
+                current_prefix, _secret = parse_session_token(current_session_token)
+            except Exception:
+                current_prefix = None
+        now = datetime.now(timezone.utc)
+        rows = await session.scalars(
+            select(UserSessionORM)
+            .where(UserSessionORM.user_id == user_id)
+            .where(UserSessionORM.revoked_at.is_(None))
+        )
+        for row in rows:
+            if row.token_prefix != current_prefix:
+                row.revoked_at = now
 
     async def create_api_key(
         self,
@@ -469,3 +532,7 @@ class RepositoryUserService:
 
     def _active_token_hash_key(self) -> bytes:
         return self._token_hash_keys[self._active_token_hash_version]
+
+
+def _normalize_user_email(email: str) -> str:
+    return email.strip().lower()
