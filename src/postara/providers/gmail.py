@@ -77,9 +77,9 @@ class GmailAdapter:
         )
 
     def mark_seen(self, mailbox, folder: str, uid: str, seen: bool) -> None:
-        uid_number = self._uid_number(uid)
+        self._uid_number(uid)
         mailbox.folder.set(folder)
-        mailbox.flag([uid_number], "\\Seen", seen)
+        mailbox.flag([uid], "\\Seen", seen)
 
     def _criteria(self, query: MessageQuery) -> str:
         parts = ["ALL"]
