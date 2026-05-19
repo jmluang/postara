@@ -57,8 +57,9 @@ class FakeMailbox:
         }
         return self.mails
 
-    def flag(self, uid, flag, value):
-        self.flag_calls.append((uid, flag, value))
+    def flag(self, uids, flag, value):
+        iter(uids)
+        self.flag_calls.append((list(uids), flag, value))
 
 
 def test_list_messages_maps_imap_mail_to_summary():
@@ -93,7 +94,7 @@ def test_mark_seen_uses_imap_seen_flag():
     adapter.mark_seen(mailbox, "INBOX", "42", True)
 
     assert mailbox.folder.selected == "INBOX"
-    assert mailbox.flag_calls == [(42, "\\Seen", True)]
+    assert mailbox.flag_calls == [([42], "\\Seen", True)]
 
 
 def test_mark_seen_rejects_invalid_uid():
