@@ -50,12 +50,13 @@ class GmailAdapter:
     def list_folders(self, mailbox) -> list[Folder]:
         return [
             Folder(
-                semantic_name=self._semantic_folder_name(info.name),
+                semantic_name=self._semantic_folder_name(info.name, info.flags),
                 native_name=info.name,
                 delimiter=info.delim,
                 flags=list(info.flags),
             )
             for info in mailbox.folder.list()
+            if self._selectable_folder(info)
         ]
 
     def fetch_message(self, mailbox, folder: str, uid: str) -> Message | None:
@@ -132,13 +133,45 @@ class GmailAdapter:
             raise MessageNotFoundError("Invalid message uid.")
         return value
 
-    def _semantic_folder_name(self, native_name: str) -> str:
+    def _semantic_folder_name(self, native_name: str, flags=()) -> str:
+        flag_names = {str(flag).lower().lstrip("\\") for flag in flags}
+        flag_mapping = {
+            "inbox": "INBOX",
+            "sent": "SENT",
+            "drafts": "DRAFTS",
+            "trash": "TRASH",
+            "junk": "SPAM",
+            "spam": "SPAM",
+            "flagged": "STARRED",
+            "all": "ALL",
+            "important": "IMPORTANT",
+        }
+        for flag, semantic_name in flag_mapping.items():
+            if flag in flag_names:
+                return semantic_name
+
         normalized = native_name.lower()
         mapping = {
             "inbox": "INBOX",
             "[gmail]/sent mail": "SENT",
+            "[gmail]/已发邮件": "SENT",
             "[gmail]/drafts": "DRAFTS",
+            "[gmail]/草稿": "DRAFTS",
             "[gmail]/trash": "TRASH",
+            "[gmail]/已删除邮件": "TRASH",
             "[gmail]/spam": "SPAM",
+            "[gmail]/垃圾邮件": "SPAM",
+            "[gmail]/starred": "STARRED",
+            "[gmail]/已加星标": "STARRED",
+            "[gmail]/all mail": "ALL",
+            "[gmail]/所有邮件": "ALL",
+            "[gmail]/important": "IMPORTANT",
+            "[gmail]/重要": "IMPORTANT",
         }
         return mapping.get(normalized, "CUSTOM")
+
+    def _selectable_folder(self, folder_info) -> bool:
+        flags = {str(flag).lower() for flag in getattr(folder_info, "flags", ())}
+        if "\\noselect" in flags or "\\nonexistent" in flags:
+            return False
+        return getattr(folder_info, "name", "") != "[Gmail]"

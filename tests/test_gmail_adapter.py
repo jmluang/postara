@@ -37,6 +37,10 @@ class FakeFolder:
         return [
             FakeFolderInfo("INBOX"),
             FakeFolderInfo("[Gmail]/Sent Mail", flags=("\\Sent",)),
+            FakeFolderInfo("[Gmail]", flags=("\\Noselect",)),
+            FakeFolderInfo("[Gmail]/垃圾邮件", flags=("\\Junk",)),
+            FakeFolderInfo("[Gmail]/已删除邮件"),
+            FakeFolderInfo("[Gmail]/所有邮件", flags=("\\All",)),
             FakeFolderInfo("Receipts"),
         ]
 
@@ -118,5 +122,10 @@ def test_list_folders_maps_gmail_semantic_names():
 
     assert folders[0].semantic_name == "INBOX"
     assert folders[1].semantic_name == "SENT"
-    assert folders[2].semantic_name == "CUSTOM"
-    assert folders[2].native_name == "Receipts"
+    assert folders[2].semantic_name == "SPAM"
+    assert folders[2].native_name == "[Gmail]/垃圾邮件"
+    assert folders[3].semantic_name == "TRASH"
+    assert folders[4].semantic_name == "ALL"
+    assert folders[5].semantic_name == "CUSTOM"
+    assert folders[5].native_name == "Receipts"
+    assert "[Gmail]" not in [folder.native_name for folder in folders]
