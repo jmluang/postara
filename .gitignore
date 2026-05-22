@@ -36,6 +36,7 @@ build/
 # Local planning/spec docs stay out of git, but product docs below are tracked.
 docs/*
 !docs/agent-api.md
+!docs/mcp-server.md
 !docs/skills/
 docs/skills/*
 !docs/skills/postara-mailbox-api/
