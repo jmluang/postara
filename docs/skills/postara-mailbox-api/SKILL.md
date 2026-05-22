@@ -68,6 +68,8 @@ Useful query fields:
 - `unread_only`: boolean
 - `since`, `before`: datetime filters
 - `from_address`: sender filter
+- `subject_contains`, `text_contains`: substring filters; may return `unsupported_provider_feature`
+- `has_attachment`: boolean; may return `unsupported_provider_feature`
 
 Gmail does not currently support provider-side `subject_contains`,
 `text_contains`, or `has_attachment`. If the API returns
@@ -107,11 +109,20 @@ Mailbox discovery returns:
       "email": "user@example.com",
       "provider": "gmail",
       "auth_type": "oauth2",
-      "api_path": "/mailboxes/gmail-primary"
+      "api_path": "/mailboxes/gmail-primary",
+      "health": {
+        "status": "ok",
+        "checked_at": "2026-05-20T09:00:00+00:00",
+        "detail": null
+      }
     }
   ]
 }
 ```
+
+`health.status` is `ok`, `reconnect_required`, or `unknown`. Skip a mailbox that
+is `reconnect_required` and ask the user to reconnect it; `unknown` means Postara
+has not used the mailbox yet and is safe to try.
 
 Message list returns summaries:
 

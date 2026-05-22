@@ -54,6 +54,31 @@ def test_account_dto_excludes_sensitive_fields():
     assert "api_key_hash" not in dto
 
 
+def test_account_dto_includes_mailbox_health():
+    account = AccountORM(
+        id=1,
+        name="work",
+        email="work@example.com",
+        provider="gmail",
+        auth_type="oauth2",
+        encrypted_password=None,
+        key_version=None,
+        imap_host="imap.gmail.com",
+        imap_port=993,
+        api_key_prefix="a8f3k29x",
+        api_key_hash=b"digest",
+        api_key_hash_version=1,
+        health_status="reconnect_required",
+        health_detail="oauth_refresh_failed",
+    )
+
+    dto = account.to_dto()
+
+    assert dto["health"]["status"] == "reconnect_required"
+    assert dto["health"]["detail"] == "oauth_refresh_failed"
+    assert "checked_at" in dto["health"]
+
+
 def test_user_dto_hides_password_hash():
     user = UserORM(
         id=1,

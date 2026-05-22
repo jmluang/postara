@@ -140,6 +140,9 @@ class AccountORM(Base):
     previous_valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    health_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="unknown")
+    health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    health_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def to_dto(self) -> dict[str, Any]:
         return {
@@ -154,6 +157,11 @@ class AccountORM(Base):
             "api_key_prefix": self.api_key_prefix,
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
+            "health": {
+                "status": self.health_status,
+                "checked_at": self.health_checked_at,
+                "detail": self.health_detail,
+            },
         }
 
 

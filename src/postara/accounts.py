@@ -53,7 +53,27 @@ class MailboxVerificationFailedError(ValueError):
 
 
 class MailboxReconnectRequiredError(RuntimeError):
-    pass
+    """Raised when stored credentials can no longer produce a provider session.
+
+    ``detail`` is a controlled enum code, never raw provider text or secrets:
+    ``credentials_missing`` | ``oauth_refresh_failed``.
+    """
+
+    def __init__(self, account_id: int, *, detail: str | None = None) -> None:
+        super().__init__(account_id)
+        self.account_id = account_id
+        self.detail = detail
+
+
+# Mailbox connection health ---------------------------------------------------
+# health_status values surfaced in the GET /mailboxes discovery response.
+MAILBOX_HEALTH_OK = "ok"
+MAILBOX_HEALTH_RECONNECT_REQUIRED = "reconnect_required"
+MAILBOX_HEALTH_UNKNOWN = "unknown"
+
+# Debounce window: skip a health UPDATE when status/detail are unchanged and the
+# last check is more recent than this, to avoid a write on every mailbox read.
+_HEALTH_REFRESH_INTERVAL = timedelta(minutes=10)
 
 
 @dataclass
@@ -79,6 +99,9 @@ class AccountRecord:
     oauth_scopes: list[str] | None = None
     oauth_subject: str | None = None
     oauth_email: str | None = None
+    health_status: str = "unknown"
+    health_checked_at: datetime | None = None
+    health_detail: str | None = None
 
     def to_dto(self) -> dict:
         return {
@@ -93,6 +116,11 @@ class AccountRecord:
             "api_key_prefix": self.api_key_prefix,
             "created_at": self.created_at.isoformat(),
             "last_used_at": self.last_used_at.isoformat() if self.last_used_at else None,
+            "health": {
+                "status": self.health_status,
+                "checked_at": self.health_checked_at.isoformat() if self.health_checked_at else None,
+                "detail": self.health_detail,
+            },
         }
 
 
@@ -437,19 +465,38 @@ class AccountService:
 
     def get_credential_for_runtime(self, account_id: int) -> AppPasswordCredential | OAuth2Credential:
         account = self.get(account_id)
+        try:
+            credential = self._resolve_runtime_credential(account)
+        except MailboxReconnectRequiredError as exc:
+            self._set_mailbox_health(account, MAILBOX_HEALTH_RECONNECT_REQUIRED, exc.detail)
+            raise
+        self._set_mailbox_health(account, MAILBOX_HEALTH_OK, None)
+        return credential
+
+    def _resolve_runtime_credential(
+        self, account: AccountRecord
+    ) -> AppPasswordCredential | OAuth2Credential:
         if account.auth_type == "app_password":
             if account.encrypted_password is None or account.key_version is None:
-                raise AccountNotFoundError(account_id)
-            return AppPasswordCredential(password=self._cipher.decrypt(account.encrypted_password, account.key_version))
+                raise AccountNotFoundError(account.id)
+            return AppPasswordCredential(
+                password=self._cipher.decrypt(account.encrypted_password, account.key_version)
+            )
         if account.auth_type == "oauth2":
             if account.oauth_access_token is None or account.key_version is None:
-                raise MailboxReconnectRequiredError(account_id)
+                raise MailboxReconnectRequiredError(account.id, detail="credentials_missing")
             return OAuth2Credential(
                 access_token=self._cipher.decrypt(account.oauth_access_token, account.key_version),
                 scopes=tuple(account.oauth_scopes or ()),
                 expires_at=account.oauth_token_expires_at,
             )
-        raise AccountNotFoundError(account_id)
+        raise AccountNotFoundError(account.id)
+
+    @staticmethod
+    def _set_mailbox_health(account: AccountRecord, status: str, detail: str | None) -> None:
+        account.health_status = status
+        account.health_detail = detail
+        account.health_checked_at = datetime.now(timezone.utc)
 
     def delete(self, account_id: int) -> None:
         if account_id not in self._accounts:
@@ -803,6 +850,55 @@ class RepositoryAccountService:
         *,
         now: datetime | None = None,
     ) -> AppPasswordCredential | OAuth2Credential:
+        try:
+            credential = await self._resolve_runtime_credential(account_id, now=now)
+        except MailboxReconnectRequiredError as exc:
+            await self._record_mailbox_health(
+                account_id, MAILBOX_HEALTH_RECONNECT_REQUIRED, exc.detail, now=now
+            )
+            raise
+        await self._record_mailbox_health(account_id, MAILBOX_HEALTH_OK, None, now=now)
+        return credential
+
+    async def _record_mailbox_health(
+        self,
+        account_id: int,
+        status: str,
+        detail: str | None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Persist mailbox connection health for the discovery response.
+
+        Debounced: skips the UPDATE when status/detail are unchanged and the
+        last check is still within ``_HEALTH_REFRESH_INTERVAL``.
+        """
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        async with self._session_factory() as session:
+            async with session.begin():
+                try:
+                    account = await self._repo(session).get_by_id(account_id)
+                except AccountNotFoundError:
+                    return
+                checked_at = account.health_checked_at
+                if checked_at is not None and checked_at.tzinfo is None:
+                    checked_at = checked_at.replace(tzinfo=timezone.utc)
+                unchanged = account.health_status == status and account.health_detail == detail
+                fresh = checked_at is not None and current_time - checked_at < _HEALTH_REFRESH_INTERVAL
+                if unchanged and fresh:
+                    return
+                account.health_status = status
+                account.health_detail = detail
+                account.health_checked_at = current_time
+
+    async def _resolve_runtime_credential(
+        self,
+        account_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> AppPasswordCredential | OAuth2Credential:
         from postara.repositories import AuditOutboxRepository
 
         async with self._session_factory() as session:
@@ -818,7 +914,7 @@ class RepositoryAccountService:
                     )
                 if account.auth_type == "oauth2":
                     if account.oauth_access_token is None or account.key_version is None:
-                        raise MailboxReconnectRequiredError(account_id)
+                        raise MailboxReconnectRequiredError(account_id, detail="credentials_missing")
                     scopes = tuple(account.oauth_scopes or ())
                     if self._oauth_token_needs_refresh(account.oauth_token_expires_at, now=now):
                         account, scopes = await self._refresh_oauth_access_token(repo, account, scopes)
@@ -851,12 +947,12 @@ class RepositoryAccountService:
     async def _refresh_oauth_access_token(self, repo, account, scopes: tuple[str, ...]):
         refresher = self._oauth_refreshers.get(account.provider)
         if refresher is None or account.oauth_refresh_token is None or account.key_version is None:
-            raise MailboxReconnectRequiredError(account.id)
+            raise MailboxReconnectRequiredError(account.id, detail="oauth_refresh_failed")
         refresh_token = self._cipher.decrypt(account.oauth_refresh_token, account.key_version)
         try:
             result = await refresher.refresh_access_token(refresh_token=refresh_token, scopes=scopes)
         except OAuthExchangeError as exc:
-            raise MailboxReconnectRequiredError(account.id) from exc
+            raise MailboxReconnectRequiredError(account.id, detail="oauth_refresh_failed") from exc
         account = await repo.update_oauth_tokens(
             account.id,
             refresh_token=refresh_token,

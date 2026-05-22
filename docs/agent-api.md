@@ -53,7 +53,12 @@ Example response:
       "email": "user@example.com",
       "provider": "gmail",
       "auth_type": "oauth2",
-      "api_path": "/mailboxes/gmail-primary"
+      "api_path": "/mailboxes/gmail-primary",
+      "health": {
+        "status": "ok",
+        "checked_at": "2026-05-20T09:00:00+00:00",
+        "detail": null
+      }
     }
   ]
 }
@@ -65,6 +70,18 @@ Selection rules for agents:
 - If the user named a mailbox, match against `name` first, then `email`.
 - If multiple mailboxes remain possible, ask the caller which mailbox to use.
 - Store `name` or `api_path` in agent memory, not `mailbox_id`.
+
+Mailbox health:
+
+- `health.status` is `ok`, `reconnect_required`, or `unknown`.
+- Skip a mailbox whose `health.status` is `reconnect_required` and tell the user
+  to reconnect it in Postara. `detail` is a short reason code such as
+  `oauth_refresh_failed` or `credentials_missing`.
+- `unknown` means Postara has not made a provider call for this mailbox yet; it
+  is safe to try, and the status updates after the first call.
+- Health reflects Postara's last attempt to load this mailbox's credentials, not
+  a guaranteed-live check. An `ok` mailbox can still fail an individual request,
+  so always handle `409 mailbox_reconnect_required` on each call.
 
 Mailbox names contain only letters, numbers, and hyphens:
 

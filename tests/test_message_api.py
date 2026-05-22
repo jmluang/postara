@@ -77,6 +77,24 @@ def test_list_messages_uses_mailbox_runtime():
     assert response.json()["messages"][0]["uid"] == "123"
 
 
+def test_mailbox_discovery_reports_connection_health():
+    client, _account_id, mailbox_name, _session_token, api_key, _runtime = client_with_account()
+
+    before = client.get("/mailboxes", headers={"X-Api-Key": api_key})
+    assert before.status_code == 200
+    assert before.json()["mailboxes"][0]["health"]["status"] == "unknown"
+
+    listed = client.get(
+        f"/mailboxes/{quote(mailbox_name, safe='')}/messages",
+        headers={"X-Api-Key": api_key},
+    )
+    assert listed.status_code == 200
+
+    after = client.get("/mailboxes", headers={"X-Api-Key": api_key})
+    assert after.status_code == 200
+    assert after.json()["mailboxes"][0]["health"]["status"] == "ok"
+
+
 def test_list_folders_uses_mailbox_runtime():
     client, _account_id, mailbox_name, session_token, _api_key, _runtime = client_with_account()
 
