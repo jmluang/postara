@@ -1,0 +1,81 @@
+# Self-contained variant that runs Postara alongside its own Postgres.
+# Use this when you don't have a managed Postgres (Supabase, RDS, etc.).
+# Use the default docker-compose.yml when you do.
+#
+# One-time setup:
+#   mkdir -p secrets
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > secrets/fernet.key
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > secrets/token_hash.key
+#   printf '%s' "choose-a-strong-db-password" > secrets/db_password.txt
+#   chmod 0400 secrets/*
+#
+# Start:
+#   docker compose -f docker-compose.postgres.yml up -d
+#   # app at http://127.0.0.1:18080
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTARA_DB_USER:-postara}"
+      POSTGRES_DB: "${POSTARA_DB_NAME:-postara}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    secrets:
+      - db_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    # Uncomment to expose Postgres on the host for ad-hoc inspection:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  postara:
+    image: "${POSTARA_IMAGE:-ghcr.io/jmluang/postara:latest}"
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_SCHEMA: app
+      AUDIT_SCHEMA: audit
+      POSTARA_SECRETS_DIR: /etc/postara/secrets
+      IMAP_WORKERS: "8"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      POSTGRES_DB: "${POSTARA_DB_NAME:-postara}"
+      POSTGRES_USER: "${POSTARA_DB_USER:-postara}"
+    volumes:
+      - ./secrets:/etc/postara/secrets:ro
+    ports:
+      - "${POSTARA_HOST_BIND:-127.0.0.1}:${POSTARA_HOST_PORT:-18080}:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2); raise SystemExit(0 if r.status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
