@@ -60,6 +60,7 @@ services:
       DB_PORT: "5432"
       POSTGRES_DB: "${POSTARA_DB_NAME:-postara}"
       POSTGRES_USER: "${POSTARA_DB_USER:-postara}"
+      DB_PASSWORD_FILE: /etc/postara/secrets/db_password.txt
     volumes:
       - ./secrets:/etc/postara/secrets:ro
     ports:
