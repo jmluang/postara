@@ -1,6 +1,7 @@
 services:
   postara:
     image: "${POSTARA_IMAGE:-ghcr.io/jmluang/postara:latest}"
+    restart: unless-stopped
     env_file:
       - .env
     user: "1000:1000"
@@ -32,8 +33,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: "1.0"
